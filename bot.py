@@ -6,6 +6,8 @@ Versione semplificata e funzionante
 import logging
 import os
 from datetime import datetime
+
+# Import delle tue librerie
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import (
@@ -18,39 +20,8 @@ import pandas as pd
 
 from ticker_searcher import TickerSearcher
 from trading_analyzer import TradingAnalyzer
-import os
-import asyncio
-import logging
-from telegram.ext import Application
 
-# Configura logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-
-# Carica variabili d'ambiente
-from dotenv import load_dotenv
-load_dotenv()
-
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-
-async def main():
-    if not TOKEN:
-        raise ValueError("TELEGRAM_BOT_TOKEN non configurato!")
-    
-    app = Application.builder().token(TOKEN).build()
-    
-    # Aggiungi qui i tuoi handler...
-    # app.add_handler(...)
-    
-    print("🤖 Bot avviato su Render!")
-    await app.run_polling()
-
-if __name__ == '__main__':
-    asyncio.run(main())
-
-# Carica variabili ambiente
+# ============ CARICA VARIABILI AMBIENTE ============
 load_dotenv()
 
 # Configura logging
@@ -59,6 +30,22 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ============ OTTIENI TOKEN ============
+# Usa TELEGRAM_BOT_TOKEN (non TELEGRAM_TOKEN)
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
+if not TOKEN:
+    print("❌ ERRORE CRITICO: TELEGRAM_BOT_TOKEN non configurato!")
+    print("\n📍 DOVE METTERE IL TOKEN:")
+    print("1. LOCALMENTE: Crea file .env con:")
+    print('   TELEGRAM_BOT_TOKEN="il_tuo_token_qui"')
+    print("2. SU RENDER: Environment Variables →")
+    print("   Key: TELEGRAM_BOT_TOKEN")
+    print("   Value: [il tuo token]")
+    exit(1)
+
+print(f"✅ Token trovato: {TOKEN[:15]}...")
 
 class TradingBot:
     def __init__(self):
@@ -98,7 +85,7 @@ class TradingBot:
 • `/analisi ENEL.MI`
 • `/grafico BTC-USD`
 """
-        await update.message.reply_text(welcome_text)
+        await update.message.reply_text(welcome_text, parse_mode='Markdown')
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Comando /help"""
@@ -134,7 +121,7 @@ class TradingBot:
             )
             return
         
-        await update.message.reply_text(f"🔍 Cerco *{query}*...",)
+        await update.message.reply_text(f"🔍 Cerco *{query}*...", parse_mode='Markdown')
         
         results = self.searcher.smart_search(query)
         
@@ -206,7 +193,7 @@ class TradingBot:
                 if query:
                     await query.message.reply_text(error_msg, parse_mode='Markdown')
                 else:
-                    await update.message.reply_text(error_msg)
+                    await update.message.reply_text(error_msg, parse_mode='Markdown')
                 return
             
             latest = hist.iloc[-1]
@@ -253,7 +240,7 @@ class TradingBot:
             if is_callback and hasattr(update, 'callback_query'):
                 await update.callback_query.message.reply_text(error_msg, parse_mode='Markdown')
             else:
-                await update.message.reply_text(error_msg)
+                await update.message.reply_text(error_msg, parse_mode='Markdown')
     
     # ==================== ANALISI ====================
     
@@ -289,9 +276,9 @@ class TradingBot:
             if hist.empty or not info:
                 error_msg = f"❌ Dati insufficienti per *{ticker}*"
                 if query:
-                    await query.message.reply_text(error_msg)
+                    await query.message.reply_text(error_msg, parse_mode='Markdown')
                 else:
-                    await update.message.reply_text(error_msg)
+                    await update.message.reply_text(error_msg, parse_mode='Markdown')
                 return
             
             # Calcola indicatori
@@ -326,9 +313,9 @@ class TradingBot:
             error_msg = f"❌ Errore analisi *{ticker}*"
             
             if is_callback and hasattr(update, 'callback_query'):
-                await update.callback_query.message.reply_text(error_msg)
+                await update.callback_query.message.reply_text(error_msg, parse_mode='Markdown')
             else:
-                await update.message.reply_text(error_msg)
+                await update.message.reply_text(error_msg, parse_mode='Markdown')
     
     # ==================== GRAFICI ====================
     
@@ -387,9 +374,9 @@ class TradingBot:
                 await loading_msg.delete()
                 error_msg = f"❌ Dati insufficienti per *{ticker}*"
                 if query:
-                    await query.message.reply_text(error_msg)
+                    await query.message.reply_text(error_msg, parse_mode='Markdown')
                 else:
-                    await update.message.reply_text(error_msg)
+                    await update.message.reply_text(error_msg, parse_mode='Markdown')
                 return
             
             # Calcola indicatori e genera grafico
@@ -438,7 +425,7 @@ class TradingBot:
             if is_callback and hasattr(update, 'callback_query'):
                 await update.callback_query.message.reply_text(error_msg, parse_mode='Markdown')
             else:
-                await update.message.reply_text(error_msg)
+                await update.message.reply_text(error_msg, parse_mode='Markdown')
     
     async def _send_simple_chart(self, update: Update, ticker: str, is_callback: bool = False):
         """Invia grafico semplice"""
@@ -456,9 +443,9 @@ class TradingBot:
             if hist.empty:
                 error_msg = f"❌ Dati insufficienti per *{ticker}*"
                 if query:
-                    await query.message.reply_text(error_msg)
+                    await query.message.reply_text(error_msg, parse_mode='Markdown')
                 else:
-                    await update.message.reply_text(error_msg)
+                    await update.message.reply_text(error_msg, parse_mode='Markdown')
                 return
             
             # Genera grafico semplice
@@ -467,9 +454,9 @@ class TradingBot:
             if not chart_image:
                 error_msg = f"❌ Impossibile generare grafico *{ticker}*"
                 if query:
-                    await query.message.reply_text(error_msg)
+                    await query.message.reply_text(error_msg, parse_mode='Markdown')
                 else:
-                    await update.message.reply_text(error_msg)
+                    await update.message.reply_text(error_msg, parse_mode='Markdown')
                 return
             
             # Caption
@@ -507,7 +494,7 @@ class TradingBot:
             if is_callback and hasattr(update, 'callback_query'):
                 await update.callback_query.message.reply_text(error_msg, parse_mode='Markdown')
             else:
-                await update.message.reply_text(error_msg)
+                await update.message.reply_text(error_msg, parse_mode='Markdown')
     
     # ==================== INFO ====================
     
@@ -532,7 +519,7 @@ Non è un consiglio di investimento.
 
 👨‍💻 *Sviluppatore:* @mafark
 """
-        await update.message.reply_text(info_text)
+        await update.message.reply_text(info_text, parse_mode='Markdown')
     
     # ==================== CALLBACK ====================
     
@@ -554,18 +541,13 @@ Non è un consiglio di investimento.
         elif data.startswith("chart_"):
             ticker = data.replace("chart_", "")
             await self._send_chart(update, ticker, is_callback=True)
-        
-        elif data.startswith("simplechart_"):
-            ticker = data.replace("simplechart_", "")
-            await self._send_simple_chart(update, ticker, is_callback=True)
 
 def main():
     """Avvia il bot"""
-    TOKEN = os.getenv("TELEGRAM_TOKEN")
-    if not TOKEN:
-        raise ValueError("❌ TELEGRAM_TOKEN non trovato")
-    
+    # TOKEN è già verificato all'inizio
     bot = TradingBot()
+    
+    # Crea applicazione
     application = Application.builder().token(TOKEN).build()
     
     # Handler comandi
@@ -589,9 +571,10 @@ def main():
     # Avvia
     logger.info("🤖 Bot avviato! Premi Ctrl+C per fermare...")
     print("\n" + "="*50)
-    print("TRADING BOT AVVIATO CORRETTAMENTE")
+    print("✅ BOT AVVIATO SU RENDER!")
     print("="*50)
-    print("\n✅ Tutte le funzioni disponibili:")
+    print(f"Token: {TOKEN[:15]}...")
+    print("\n📋 Comandi disponibili:")
     print("• /start - Benvenuto")
     print("• /cerca [nome] - Ricerca titoli")
     print("• /prezzo [ticker] - Prezzo")
@@ -599,9 +582,9 @@ def main():
     print("• /grafico [ticker] - Grafico avanzato")
     print("• /grafico_semplice [ticker] - Grafico veloce")
     print("• /info - Info bot")
-    print("\n⚠️ Assicurati di avere TELEGRAM_TOKEN in .env")
     print("="*50 + "\n")
     
+    # Avvia polling
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
