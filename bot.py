@@ -18,6 +18,37 @@ import pandas as pd
 
 from ticker_searcher import TickerSearcher
 from trading_analyzer import TradingAnalyzer
+import os
+import asyncio
+import logging
+from telegram.ext import Application
+
+# Configura logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
+# Carica variabili d'ambiente
+from dotenv import load_dotenv
+load_dotenv()
+
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
+async def main():
+    if not TOKEN:
+        raise ValueError("TELEGRAM_BOT_TOKEN non configurato!")
+    
+    app = Application.builder().token(TOKEN).build()
+    
+    # Aggiungi qui i tuoi handler...
+    # app.add_handler(...)
+    
+    print("🤖 Bot avviato su Render!")
+    await app.run_polling()
+
+if __name__ == '__main__':
+    asyncio.run(main())
 
 # Carica variabili ambiente
 load_dotenv()
