@@ -308,7 +308,7 @@ def main():
                     # Tabella riepilogativa
                     st.dataframe(
                         pd.DataFrame(summary_data),
-                        width='stretch',  # CORRETTO: sostituito use_container_width
+                        use_container_width=True,
                         hide_index=True
                     )
                     
@@ -327,7 +327,7 @@ def main():
                         
                         # Tabs per diversi tipi di visualizzazione
                         tab1, tab2, tab3, tab4 = st.tabs([
-                            "📈 Grafico Completo", 
+                            "📈 Grafico Lineare",  # Cambiato da "Grafico Completo"
                             "🔄 Confronto Periodi",
                             "📋 Dati Raw", 
                             "🎯 Segnali Trading"
@@ -341,14 +341,170 @@ def main():
                                 show_bollinger = st.checkbox("Bollinger Bands", 
                                                            value="BB" in show_indicators)
                                 show_volume = st.checkbox("Volume", value=True)
+                                chart_type = st.selectbox(
+                                    "Tipo di grafico:",
+                                    options=["Linea (Close)", "OHLC"],
+                                    index=0
+                                )
                             
-                            fig = analyzer.create_chart(df, f"{selected_period}")
+                            # Creazione del grafico in base alla selezione
+                            if chart_type == "Linea (Close)":
+                                # Grafico a linee semplice (solo prezzo di chiusura)
+                                fig = go.Figure()
+                                
+                                # Linea del prezzo di chiusura
+                                fig.add_trace(go.Scatter(
+                                    x=df.index,
+                                    y=df['Close'],
+                                    mode='lines',
+                                    name='Prezzo',
+                                    line=dict(color='#00FF00', width=2),
+                                    fill='tozeroy',
+                                    fillcolor='rgba(0, 255, 0, 0.1)'
+                                ))
+                                
+                                # Medie mobili se richieste
+                                if show_sma and 'SMA_20' in df.columns:
+                                    fig.add_trace(go.Scatter(
+                                        x=df.index,
+                                        y=df['SMA_20'],
+                                        mode='lines',
+                                        name='SMA 20',
+                                        line=dict(color='orange', width=1, dash='dash')
+                                    ))
+                                
+                                if show_sma and 'SMA_50' in df.columns:
+                                    fig.add_trace(go.Scatter(
+                                        x=df.index,
+                                        y=df['SMA_50'],
+                                        mode='lines',
+                                        name='SMA 50',
+                                        line=dict(color='red', width=1, dash='dash')
+                                    ))
+                                
+                                # Bollinger Bands se richieste
+                                if show_bollinger and 'BB_Upper' in df.columns and 'BB_Lower' in df.columns:
+                                    fig.add_trace(go.Scatter(
+                                        x=df.index,
+                                        y=df['BB_Upper'],
+                                        mode='lines',
+                                        name='BB Upper',
+                                        line=dict(color='blue', width=1),
+                                        fill=None
+                                    ))
+                                    
+                                    fig.add_trace(go.Scatter(
+                                        x=df.index,
+                                        y=df['BB_Lower'],
+                                        mode='lines',
+                                        name='BB Lower',
+                                        line=dict(color='blue', width=1),
+                                        fill='tonexty',
+                                        fillcolor='rgba(0, 0, 255, 0.1)'
+                                    ))
+                                
+                            else:  # OHLC chart
+                                fig = go.Figure(data=[
+                                    go.Ohlc(
+                                        x=df.index,
+                                        open=df['Open'],
+                                        high=df['High'],
+                                        low=df['Low'],
+                                        close=df['Close'],
+                                        name='OHLC'
+                                    )
+                                ])
                             
-                            # Personalizza grafico in base alle selezioni
-                            if not show_volume:
-                                fig.update_traces(selector=dict(name="Volume"), visible=False)
+                            # Volume se richiesto (sotto il grafico principale)
+                            if show_volume and 'Volume' in df.columns:
+                                # Crea subplot per volume
+                                from plotly.subplots import make_subplots
+                                
+                                fig = make_subplots(
+                                    rows=2, cols=1,
+                                    shared_xaxes=True,
+                                    vertical_spacing=0.03,
+                                    subplot_titles=(f'Prezzo {current_symbol}', 'Volume'),
+                                    row_heights=[0.7, 0.3]
+                                )
+                                
+                                # Prezzo
+                                if chart_type == "Linea (Close)":
+                                    fig.add_trace(
+                                        go.Scatter(
+                                            x=df.index,
+                                            y=df['Close'],
+                                            mode='lines',
+                                            name='Prezzo',
+                                            line=dict(color='#00FF00', width=2)
+                                        ),
+                                        row=1, col=1
+                                    )
+                                else:
+                                    fig.add_trace(
+                                        go.Ohlc(
+                                            x=df.index,
+                                            open=df['Open'],
+                                            high=df['High'],
+                                            low=df['Low'],
+                                            close=df['Close'],
+                                            name='OHLC'
+                                        ),
+                                        row=1, col=1
+                                    )
+                                
+                                # Medie mobili
+                                if show_sma and 'SMA_20' in df.columns:
+                                    fig.add_trace(
+                                        go.Scatter(
+                                            x=df.index,
+                                            y=df['SMA_20'],
+                                            mode='lines',
+                                            name='SMA 20',
+                                            line=dict(color='orange', width=1, dash='dash')
+                                        ),
+                                        row=1, col=1
+                                    )
+                                
+                                if show_sma and 'SMA_50' in df.columns:
+                                    fig.add_trace(
+                                        go.Scatter(
+                                            x=df.index,
+                                            y=df['SMA_50'],
+                                            mode='lines',
+                                            name='SMA 50',
+                                            line=dict(color='red', width=1, dash='dash')
+                                        ),
+                                        row=1, col=1
+                                    )
+                                
+                                # Volume
+                                colors = ['green' if close >= open else 'red' 
+                                         for close, open in zip(df['Close'], df['Open'])]
+                                
+                                fig.add_trace(
+                                    go.Bar(
+                                        x=df.index,
+                                        y=df['Volume'],
+                                        name='Volume',
+                                        marker_color=colors,
+                                        opacity=0.7
+                                    ),
+                                    row=2, col=1
+                                )
                             
-                            st.plotly_chart(fig, width='stretch')  # CORRETTO
+                            # Layout del grafico
+                            fig.update_layout(
+                                title=f'{current_symbol} - {selected_period} mesi ({chart_type})',
+                                template='plotly_dark',
+                                height=600,
+                                showlegend=True,
+                                xaxis_title='Data',
+                                yaxis_title='Prezzo ($)',
+                                hovermode='x unified'
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
                         
                         with tab2:
                             # Confronto tra periodi
@@ -373,7 +529,7 @@ def main():
                                     height=500
                                 )
                                 
-                                st.plotly_chart(fig_comparison, width='stretch')  # CORRETTO
+                                st.plotly_chart(fig_comparison, use_container_width=True)
                             else:
                                 st.info("Seleziona almeno 2 periodi per il confronto")
                         
@@ -398,7 +554,7 @@ def main():
                             
                             st.dataframe(
                                 df[show_columns].tail(rows_to_show),
-                                width='stretch'  # CORRETTO
+                                use_container_width=True
                             )
                             
                             # Download dati

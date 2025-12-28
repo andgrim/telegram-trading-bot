@@ -2,42 +2,43 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
-from utils import get_stock_data, calculate_technical_indicators, search_tickers, get_ticker_info  # <-- Aggiungi tutti
+from utils import get_stock_data, calculate_technical_indicators
 
 class TradingAnalyzer:
     def __init__(self, symbol: str):
         self.symbol = symbol.upper()
     
-        
     def analyze_period(self, period_months: int = 3):
-        """Analizza un periodo specifico"""
-        df = get_stock_data(self.symbol, period_months)
-        if df.empty:
+        """Analizza per un periodo specifico"""
+        try:
+            # Ottieni dati
+            df = get_stock_data(self.symbol, period_months)
+            
+            if df.empty:
+                return None
+            
+            # Calcola indicatori
+            df = calculate_technical_indicators(df)
+            
+            return df
+            
+        except Exception as e:
+            print(f"Errore analisi {self.symbol}: {e}")
             return None
-        
-        df = calculate_technical_indicators(df)
-        return df
     
-    def generate_summary(self, df_3m: pd.DataFrame, df_6m: pd.DataFrame) -> dict:
-        """Genera riepilogo analisi"""
-        if df_3m is None or df_6m is None:
-            return {}
+    def _analyze_volume_trend(self, df):
+        """Analizza trend volume (semplificato)"""
+        if len(df) < 10:
+            return "N/A"
         
-        latest_price = df_3m['Close'].iloc[-1]
+        avg_volume = df['Volume'].mean()
+        recent_volume = df['Volume'].iloc[-5:].mean()
         
-        summary = {
-            'symbol': self.symbol,
-            'current_price': latest_price,
-            'price_change_3m': self._calculate_price_change(df_3m),
-            'price_change_6m': self._calculate_price_change(df_6m),
-            'rsi_3m': df_3m['RSI'].iloc[-1],
-            'rsi_6m': df_6m['RSI'].iloc[-1],
-            'macd_signal_3m': self._get_macd_signal(df_3m),
-            'macd_signal_6m': self._get_macd_signal(df_6m),
-            'volume_trend': self._analyze_volume_trend(df_3m),
-        }
-        
-        return summary
+        if recent_volume > avg_volume * 1.2:
+            return "ALTO"
+        elif recent_volume < avg_volume * 0.8:
+            return "BASSO"
+        return "NORMALE"
     
     def _calculate_price_change(self, df: pd.DataFrame) -> float:
         """Calcola variazione prezzo"""
@@ -52,17 +53,6 @@ class TradingAnalyzer:
         elif df['MACD'].iloc[-1] < df['Signal_Line'].iloc[-1]:
             return "BEARISH"
         return "NEUTRAL"
-    
-    def _analyze_volume_trend(self, df: pd.DataFrame) -> str:
-        """Analizza trend volume"""
-        avg_volume = df['Volume'].mean()
-        recent_volume = df['Volume'].iloc[-5:].mean()
-        
-        if recent_volume > avg_volume * 1.2:
-            return "HIGH"
-        elif recent_volume < avg_volume * 0.8:
-            return "LOW"
-        return "NORMAL"
     
     def create_chart(self, df: pd.DataFrame, period: str) -> go.Figure:
         """Crea grafico con indicatori"""
