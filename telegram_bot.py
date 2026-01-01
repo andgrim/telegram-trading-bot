@@ -1,6 +1,7 @@
 import asyncio
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
 from trading_analyzer import TradingAnalyzer
 from utils import search_tickers, get_ticker_info
 import pandas as pd
@@ -32,15 +33,15 @@ class TelegramTradingBot:
         welcome_message = f"""
 👋 Welcome {user.first_name} to the Trading Bot!
 
-Available commands:
+📈 **Available commands:**
 /search - Search for a ticker by symbol or name
-/analyze <symbol> - Analyze a ticker (e.g.: /analyze AAPL)
+/analyze <symbol> - Complete ticker analysis
 /quick <symbol> - Quick analysis
 /compare <sym1> <sym2> - Compare two tickers
 /settings - Configure analysis parameters
 /help - Show this guide
 
-Examples:
+📊 **Examples:**
 • /search Apple
 • /analyze TSLA
 • /analyze BTC-USD
@@ -122,7 +123,7 @@ Examples:
         
         # Save symbol in user data
         if user_id not in self.user_data:
-            self.user_data[user_id] = {'periods': [3, 6], 'interval': '1d'}
+            self.user_data[user_id] = {'periods': [1, 3, 6], 'interval': '1d'}
         
         await update.message.reply_text(f"📊 Analyzing {symbol}...")
         
@@ -183,7 +184,7 @@ Examples:
             await update.message.reply_text(message, parse_mode='Markdown')
             
             # Execute technical analysis
-            periods = self.user_data.get(user_id, {}).get('periods', [3, 6])
+            periods = self.user_data.get(user_id, {}).get('periods', [1, 3, 6])
             
             analyzer = TradingAnalyzer(symbol)
             summary_data = []
@@ -192,14 +193,18 @@ Examples:
                 df = analyzer.analyze_period(period)
                 
                 if df is not None and not df.empty:
-                    price_change = ((df['Close'].iloc[-1] / df['Close'].iloc[0]) - 1) * 100
-                    current_rsi = df['RSI'].iloc[-1] if 'RSI' in df.columns else 50
-                    macd_signal = "↑" if df['MACD'].iloc[-1] > df['Signal_Line'].iloc[-1] else "↓" if 'MACD' in df.columns else "N/A"
+                    # Calculate performance for THIS period
+                    start_idx = 0
+                    end_idx = -1
+                    
+                    price_change = ((df['Close'].iloc[end_idx] / df['Close'].iloc[start_idx]) - 1) * 100
+                    current_rsi = df['RSI'].iloc[end_idx] if 'RSI' in df.columns else 50
+                    macd_signal = "↑" if df['MACD'].iloc[end_idx] > df['Signal_Line'].iloc[end_idx] else "↓" if 'MACD' in df.columns else "N/A"
                     volume_trend = analyzer._analyze_volume_trend(df)
                     
                     summary_data.append({
                         'period': period,
-                        'price': df['Close'].iloc[-1],
+                        'price': df['Close'].iloc[end_idx],
                         'change': price_change,
                         'rsi': current_rsi,
                         'macd': macd_signal,
@@ -224,8 +229,12 @@ Examples:
                 # Create keyboard for additional options
                 keyboard = [
                     [
-                        InlineKeyboardButton("📈 Chart 3M", callback_data=f"chart_{symbol}_3"),
-                        InlineKeyboardButton("📊 Chart 6M", callback_data=f"chart_{symbol}_6")
+                        InlineKeyboardButton("📈 Chart 1M", callback_data=f"chart_{symbol}_1"),
+                        InlineKeyboardButton("📊 Chart 3M", callback_data=f"chart_{symbol}_3")
+                    ],
+                    [
+                        InlineKeyboardButton("📈 Chart 6M", callback_data=f"chart_{symbol}_6"),
+                        InlineKeyboardButton("📊 Chart 12M", callback_data=f"chart_{symbol}_12")
                     ],
                     [
                         InlineKeyboardButton("🎯 Signals", callback_data=f"signals_{symbol}"),
@@ -559,14 +568,14 @@ Examples:
             user_id = query.from_user.id
         
         if user_id not in self.user_data:
-            self.user_data[user_id] = {'periods': [3, 6], 'interval': '1d'}
+            self.user_data[user_id] = {'periods': [1, 3, 6], 'interval': '1d'}
         
         settings = self.user_data[user_id]
         
         settings_text = f"""
 ⚙️ **USER SETTINGS**
 
-📅 Analysis periods: {', '.join(map(str, settings.get('periods', [3, 6])))} months
+📅 Analysis periods: {', '.join(map(str, settings.get('periods', [1, 3, 6])))} months
 📊 Interval: {settings.get('interval', '1d')}
 
 Use /periods <list> to change periods
@@ -575,8 +584,11 @@ Example: /periods 1,3,6,12
         
         keyboard = [
             [
-                InlineKeyboardButton("📅 Periods", callback_data="set_periods"),
-                InlineKeyboardButton("📊 Interval", callback_data="set_interval")
+                InlineKeyboardButton("📅 Set Periods", callback_data="set_periods"),
+                InlineKeyboardButton("📊 Set Interval", callback_data="set_interval")
+            ],
+            [
+                InlineKeyboardButton("🔄 Reset to Default", callback_data="reset_settings")
             ],
             [
                 InlineKeyboardButton("🔙 Back", callback_data="back_settings")
@@ -594,21 +606,33 @@ Example: /periods 1,3,6,12
     async def set_periods_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Set analysis periods"""
         if not context.args:
-            await update.message.reply_text("❌ Specify periods:\n/periods 1,3,6\n/periods 3,12")
+            await update.message.reply_text("❌ Specify periods:\n/periods 1,3,6\n/periods 3,12\n/periods 1,3,6,12")
             return
         
         try:
             periods_str = context.args[0]
             periods = [int(p.strip()) for p in periods_str.split(',')]
             
+            # Validate periods
+            valid_periods = []
+            for p in periods:
+                if p > 0 and p <= 60:  # Max 5 years
+                    valid_periods.append(p)
+                else:
+                    await update.message.reply_text(f"⚠️ Period {p} months ignored (must be 1-60)")
+            
+            if not valid_periods:
+                await update.message.reply_text("❌ No valid periods specified")
+                return
+            
             user_id = update.effective_user.id
             if user_id not in self.user_data:
                 self.user_data[user_id] = {}
             
-            self.user_data[user_id]['periods'] = periods
+            self.user_data[user_id]['periods'] = sorted(valid_periods)
             
             await update.message.reply_text(
-                f"✅ Periods set: {', '.join(map(str, periods))} months"
+                f"✅ Periods set: {', '.join(map(str, sorted(valid_periods)))} months"
             )
             
         except Exception as e:
@@ -712,9 +736,15 @@ Example: /periods 1,3,6,12
             
             elif data.startswith("chart_"):
                 parts = data.split("_")
-                symbol = parts[1]
-                period = int(parts[2]) if len(parts) > 2 else 3
-                await self.show_chart(query, context, symbol, period)
+                if len(parts) >= 3:
+                    symbol = parts[1]
+                    try:
+                        period = int(parts[2])
+                        await self.show_chart(query, context, symbol, period)
+                    except ValueError:
+                        await query.answer("❌ Invalid period", show_alert=True)
+                else:
+                    await query.answer("❌ Invalid chart request", show_alert=True)
             
             elif data.startswith("signals_"):
                 symbol = data.replace("signals_", "")
@@ -728,25 +758,43 @@ Example: /periods 1,3,6,12
                 symbol = data.replace("download_", "")
                 await self.download_data(query, context, symbol)
             
-            elif data.startswith("analyze_full_"):
-                symbol = data.replace("analyze_full_", "")
-                await self.analyze_ticker_from_callback(query, context, symbol)
-            
             elif data == "settings":
                 await self.settings_menu(update, context)
             
             elif data == "set_periods":
                 await query.edit_message_text(
-                    "📅 Set periods:\n\nUse /periods <list>\nExample: /periods 1,3,6,12"
+                    "📅 **Set Analysis Periods:**\n\n"
+                    "Use command: /periods <months>\n"
+                    "Example: `/periods 1,3,6`\n"
+                    "Example: `/periods 1,3,6,12`\n\n"
+                    "Maximum period: 60 months (5 years)"
                 )
             
             elif data == "set_interval":
                 await query.edit_message_text(
-                    "📊 Set interval:\n\nUse /interval <interval>\nExample: /interval 1d (daily)\n1wk (weekly)\n1mo (monthly)"
+                    "📊 **Set Data Interval:**\n\n"
+                    "Use command: /interval <value>\n"
+                    "Available intervals:\n"
+                    "• 1d (daily)\n"
+                    "• 1wk (weekly)\n"
+                    "• 1mo (monthly)\n\n"
+                    "Example: `/interval 1d`"
+                )
+            
+            elif data == "reset_settings":
+                user_id = query.from_user.id
+                self.user_data[user_id] = {'periods': [1, 3, 6], 'interval': '1d'}
+                await query.edit_message_text(
+                    "✅ Settings reset to default:\n"
+                    "• Periods: 1, 3, 6 months\n"
+                    "• Interval: 1d (daily)"
                 )
             
             elif data == "back_settings":
                 await query.edit_message_text("🔙 Back to main menu")
+            
+            else:
+                await query.answer("⚠️ Unknown command", show_alert=True)
         
         except Exception as e:
             logger.error(f"Callback handler error: {e}")
@@ -757,7 +805,7 @@ Example: /periods 1,3,6,12
     
     async def analyze_ticker_from_callback(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
         """Analyze ticker from callback"""
-        await query.edit_message_text(f"📊 Analyzing {symbol}...")
+        user_id = query.from_user.id
         
         try:
             ticker_info = get_ticker_info(symbol)
@@ -789,13 +837,19 @@ Example: /periods 1,3,6,12
 📊 Sector: {ticker_info.get('sector', 'N/A')}
 📈 Market Cap: {market_cap_str}
 
-Use /analyze {symbol} for complete analysis
+Click buttons below for detailed analysis:
             """
             
-            keyboard = [[
-                InlineKeyboardButton("📊 Complete Analysis", callback_data=f"analyze_full_{symbol}"),
-                InlineKeyboardButton("📈 Chart", callback_data=f"chart_{symbol}_3")
-            ]]
+            keyboard = [
+                [
+                    InlineKeyboardButton("📊 Full Analysis", callback_data=f"full_analyze_{symbol}"),
+                    InlineKeyboardButton("📈 Chart 3M", callback_data=f"chart_{symbol}_3")
+                ],
+                [
+                    InlineKeyboardButton("🎯 Signals", callback_data=f"signals_{symbol}"),
+                    InlineKeyboardButton("📋 Data", callback_data=f"data_{symbol}")
+                ]
+            ]
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -833,6 +887,33 @@ Use /analyze {symbol} for complete analysis
         application.add_handler(CommandHandler("compare", self.compare_tickers))
         application.add_handler(CommandHandler("settings", self.settings_menu))
         application.add_handler(CommandHandler("periods", self.set_periods_command))
+        
+        # Add interval command handler
+        async def set_interval_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Set data interval"""
+            if not context.args:
+                await update.message.reply_text(
+                    "❌ Specify interval:\n/interval 1d\n/interval 1wk\n/interval 1mo"
+                )
+                return
+            
+            interval = context.args[0].lower()
+            valid_intervals = ['1d', '1wk', '1mo']
+            
+            if interval not in valid_intervals:
+                await update.message.reply_text(
+                    f"❌ Invalid interval. Use: {', '.join(valid_intervals)}"
+                )
+                return
+            
+            user_id = update.effective_user.id
+            if user_id not in self.user_data:
+                self.user_data[user_id] = {}
+            
+            self.user_data[user_id]['interval'] = interval
+            await update.message.reply_text(f"✅ Interval set to: {interval}")
+        
+        application.add_handler(CommandHandler("interval", set_interval_command))
         
         # Callback query
         application.add_handler(CallbackQueryHandler(self.callback_handler))
