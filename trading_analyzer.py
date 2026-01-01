@@ -55,155 +55,155 @@ class TradingAnalyzer:
         return "NEUTRAL"
     
     def create_technical_chart(self, df: pd.DataFrame, period: str):
-        """Create professional technical chart in black style (6 months style)"""
-        # Colori stile foto RMNI
-        WHITE = '#FFFFFF'
-        ORANGE = '#FF6B00'  # SMA 20
-        BLUE = '#00A8FF'    # SMA 50
-        GREEN = '#00FF9D'   # Sopra SMA20, MACD positivo
-        PURPLE = '#9D4EDD'  # RSI
-        RED = '#FF0033'     # MACD negativo, Sovracomprato
+        """Create professional technical chart in black style with thin lines"""
+        # NUOVI COLORI - Linee sottili
+        AQUA_MARINE = '#00FF9D'  # Verde acqua marina per linea prezzo
+        LIGHT_ORANGE = '#FF8C42'  # SMA 20
+        LIGHT_BLUE = '#4CC9F0'    # SMA 50
+        PURPLE = '#9D4EDD'       # RSI
+        RED = '#FF0033'          # MACD negativo
+        WHITE = '#FFFFFF'        # Testi
         
         # Figura con sfondo nero
         fig = plt.figure(figsize=(14, 10), facecolor='black')
         
-        # GridSpec con 4 righe: Prezzo, MACD, RSI, Volume
+        # GridSpec con 4 righe
         gs = GridSpec(4, 1, figure=fig, height_ratios=[3, 1, 1, 1], hspace=0.12)
         
-        # ========== 1. GRAFICO PREZZI ==========
+        # ========== 1. GRAFICO PREZZI (LINEA SOTTILE) ==========
         ax_price = fig.add_subplot(gs[0])
         ax_price.set_facecolor('black')
         
-        # Plot prezzo (linea principale)
-        ax_price.plot(df.index, df['Close'], color=WHITE, linewidth=2.5, 
-                     label='Prezzo', alpha=0.95, zorder=5)
+        # Plot prezzo con linea VERDE ACQUA MARINA sottile
+        ax_price.plot(df.index, df['Close'], color=AQUA_MARINE, linewidth=1.5, 
+                     label='Price', alpha=0.95, zorder=5)
         
-        # Medie mobili
+        # Medie mobili con linee sottili
         if 'SMA_20' in df.columns:
-            ax_price.plot(df.index, df['SMA_20'], color=ORANGE, linewidth=1.8,
-                         label='SMA 20', alpha=0.85, zorder=4)
+            ax_price.plot(df.index, df['SMA_20'], color=LIGHT_ORANGE, linewidth=1.0,
+                         label='SMA 20', alpha=0.7, zorder=4, linestyle='--')
         
         if 'SMA_50' in df.columns:
-            ax_price.plot(df.index, df['SMA_50'], color=BLUE, linewidth=1.8,
-                         label='SMA 50', alpha=0.85, zorder=3)
+            ax_price.plot(df.index, df['SMA_50'], color=LIGHT_BLUE, linewidth=1.0,
+                         label='SMA 50', alpha=0.7, zorder=3, linestyle='-.')
         
-        # Evidenzia area sopra SMA20 (come nella foto)
+        # Evidenzia area sopra SMA20 (trasparente)
         if 'SMA_20' in df.columns:
             above_sma20 = df['Close'] > df['SMA_20']
             ax_price.fill_between(df.index, df['SMA_20'], df['Close'],
-                                 where=above_sma20, color=GREEN, alpha=0.2,
-                                 label='Sopra SMA20', zorder=2)
+                                 where=above_sma20, color=AQUA_MARINE, alpha=0.1,
+                                 label='Above SMA20', zorder=2)
         
         # Titolo
         price_change = self._calculate_price_change(df)
         current_price = df['Close'].iloc[-1]
-        title_text = (f'{self.symbol} - Analisi {period} mesi\n'
-                     f'Prezzo: ${current_price:.2f} | Variazione: {price_change:+.2f}%')
-        ax_price.set_title(title_text, fontsize=14, color=WHITE, 
+        title_text = (f'{self.symbol} - {period} months analysis\n'
+                     f'Price: ${current_price:.2f} | Change: {price_change:+.2f}%')
+        ax_price.set_title(title_text, fontsize=13, color=WHITE, 
                           fontweight='bold', pad=12, loc='left')
         
         # Labels e ticks
-        ax_price.set_ylabel('Prezzo ($)', color=WHITE, fontsize=11)
-        ax_price.tick_params(axis='y', colors=WHITE, labelsize=9)
-        ax_price.tick_params(axis='x', colors=WHITE, labelsize=9)
+        ax_price.set_ylabel('Price ($)', color=WHITE, fontsize=10)
+        ax_price.tick_params(axis='y', colors=WHITE, labelsize=8)
+        ax_price.tick_params(axis='x', colors=WHITE, labelsize=8)
         
-        # Grid
-        ax_price.grid(True, alpha=0.15, color='gray', linestyle='--', linewidth=0.5)
+        # Grid sottile
+        ax_price.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3)
         
         # Legend
         ax_price.legend(loc='upper left', facecolor='#111111', edgecolor=WHITE,
-                       labelcolor=WHITE, fontsize=9, framealpha=0.9)
+                       labelcolor=WHITE, fontsize=8, framealpha=0.9)
         
-        # ========== 2. GRAFICO MACD ==========
+        # ========== 2. GRAFICO MACD (LINEA SOTTILE) ==========
         ax_macd = fig.add_subplot(gs[1], sharex=ax_price)
         ax_macd.set_facecolor('black')
         
-        # MACD lines
-        ax_macd.plot(df.index, df['MACD'], color=GREEN, linewidth=1.8,
-                    label='MACD', alpha=0.9, zorder=3)
-        ax_macd.plot(df.index, df['Signal_Line'], color=RED, linewidth=1.8,
-                    label='Signal', alpha=0.9, linestyle='--', zorder=2)
+        # MACD lines sottili
+        ax_macd.plot(df.index, df['MACD'], color=AQUA_MARINE, linewidth=1.2,
+                    label='MACD', alpha=0.8, zorder=3)
+        ax_macd.plot(df.index, df['Signal_Line'], color=RED, linewidth=1.2,
+                    label='Signal', alpha=0.8, linestyle='--', zorder=2)
         
-        # MACD histogram
-        macd_colors = [GREEN if val >= 0 else RED for val in df['MACD_Histogram']]
+        # MACD histogram sottile
+        macd_colors = [AQUA_MARINE if val >= 0 else RED for val in df['MACD_Histogram']]
         ax_macd.bar(df.index, df['MACD_Histogram'], color=macd_colors,
-                   alpha=0.6, width=0.8, edgecolor='none', zorder=1)
+                   alpha=0.5, width=0.6, edgecolor='none', linewidth=0.5, zorder=1)
         
-        # Zero line
-        ax_macd.axhline(y=0, color=WHITE, linestyle='-', linewidth=0.8, alpha=0.6)
+        # Zero line sottile
+        ax_macd.axhline(y=0, color=WHITE, linestyle='-', linewidth=0.5, alpha=0.4)
         
         # Labels
-        ax_macd.set_ylabel('MACD Signal', color=WHITE, fontsize=11)
-        ax_macd.tick_params(colors=WHITE, labelsize=9)
-        ax_macd.grid(True, alpha=0.15, color='gray', linestyle='--', linewidth=0.5)
-        ax_macd.legend(loc='upper left', facecolor='#111111', edgecolor=GREEN,
-                      labelcolor=WHITE, fontsize=8, framealpha=0.9)
+        ax_macd.set_ylabel('MACD Signal', color=WHITE, fontsize=10)
+        ax_macd.tick_params(colors=WHITE, labelsize=8)
+        ax_macd.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3)
+        ax_macd.legend(loc='upper left', facecolor='#111111', edgecolor=AQUA_MARINE,
+                      labelcolor=WHITE, fontsize=7, framealpha=0.9)
         
-        # ========== 3. GRAFICO RSI ==========
+        # ========== 3. GRAFICO RSI (LINEA SOTTILE) ==========
         ax_rsi = fig.add_subplot(gs[2], sharex=ax_price)
         ax_rsi.set_facecolor('black')
         
-        # RSI line
-        ax_rsi.plot(df.index, df['RSI'], color=PURPLE, linewidth=2.0, alpha=0.9)
+        # RSI line sottile
+        ax_rsi.plot(df.index, df['RSI'], color=PURPLE, linewidth=1.2, alpha=0.8)
         
-        # RSI levels
-        ax_rsi.axhline(y=70, color=RED, linestyle='--', linewidth=1.3, alpha=0.8)
-        ax_rsi.axhline(y=30, color=GREEN, linestyle='--', linewidth=1.3, alpha=0.8)
+        # RSI levels sottili
+        ax_rsi.axhline(y=70, color=RED, linestyle='--', linewidth=0.8, alpha=0.6)
+        ax_rsi.axhline(y=30, color=AQUA_MARINE, linestyle='--', linewidth=0.8, alpha=0.6)
         
-        # Zone colorate
-        ax_rsi.fill_between(df.index, 30, 70, color='gray', alpha=0.1)
-        ax_rsi.fill_between(df.index, 70, 100, color=RED, alpha=0.1)
-        ax_rsi.fill_between(df.index, 0, 30, color=GREEN, alpha=0.1)
+        # Zone colorate (trasparenti)
+        ax_rsi.fill_between(df.index, 30, 70, color='gray', alpha=0.05)
+        ax_rsi.fill_between(df.index, 70, 100, color=RED, alpha=0.05)
+        ax_rsi.fill_between(df.index, 0, 30, color=AQUA_MARINE, alpha=0.05)
         
         # Labels
-        ax_rsi.text(0.02, 1.02, 'Sovracomprato (70)', transform=ax_rsi.transAxes,
-                   color=RED, fontsize=8, verticalalignment='bottom')
-        ax_rsi.text(0.02, -0.02, 'Sovravenduto (30)', transform=ax_rsi.transAxes,
-                   color=GREEN, fontsize=8, verticalalignment='top')
+        ax_rsi.text(0.02, 1.02, 'Overbought (70)', transform=ax_rsi.transAxes,
+                   color=RED, fontsize=7, verticalalignment='bottom')
+        ax_rsi.text(0.02, -0.02, 'Oversold (30)', transform=ax_rsi.transAxes,
+                   color=AQUA_MARINE, fontsize=7, verticalalignment='top')
         
         # RSI current value
         last_rsi = df['RSI'].iloc[-1]
         ax_rsi.text(0.98, 0.95, f'RSI: {last_rsi:.1f}', transform=ax_rsi.transAxes,
-                   color=WHITE, fontsize=9, fontweight='bold', ha='right',
+                   color=WHITE, fontsize=8, fontweight='bold', ha='right',
                    bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.8))
         
-        ax_rsi.set_ylabel('RSI', color=WHITE, fontsize=11)
+        ax_rsi.set_ylabel('RSI', color=WHITE, fontsize=10)
         ax_rsi.set_ylim(0, 100)
-        ax_rsi.tick_params(colors=WHITE, labelsize=9)
-        ax_rsi.grid(True, alpha=0.15, color='gray', linestyle='--', linewidth=0.5)
+        ax_rsi.tick_params(colors=WHITE, labelsize=8)
+        ax_rsi.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3)
         
-        # ========== 4. GRAFICO VOLUME ==========
+        # ========== 4. GRAFICO VOLUME (BARRE SOTTILI) ==========
         ax_volume = fig.add_subplot(gs[3], sharex=ax_price)
         ax_volume.set_facecolor('black')
         
-        # Volume bars colorate (verde se prezzo sale, rosso se scende)
+        # Volume bars colorate con linee sottili
         volume_colors = []
         for i in range(len(df)):
             if i == 0:
-                volume_colors.append(GREEN)
+                volume_colors.append(AQUA_MARINE)
             else:
-                volume_colors.append(GREEN if df['Close'].iloc[i] >= df['Close'].iloc[i-1] else RED)
+                volume_colors.append(AQUA_MARINE if df['Close'].iloc[i] >= df['Close'].iloc[i-1] else RED)
         
         ax_volume.bar(df.index, df['Volume'], color=volume_colors,
-                     alpha=0.7, width=0.8, edgecolor='none')
+                     alpha=0.6, width=0.6, edgecolor='none', linewidth=0.3)
         
         # Labels
-        ax_volume.set_ylabel('Volume', color=WHITE, fontsize=11)
-        ax_volume.tick_params(colors=WHITE, labelsize=9)
-        ax_volume.grid(True, alpha=0.15, color='gray', linestyle='--', linewidth=0.5, axis='y')
+        ax_volume.set_ylabel('Volume', color=WHITE, fontsize=10)
+        ax_volume.tick_params(colors=WHITE, labelsize=8)
+        ax_volume.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3, axis='y')
         
-        # Formatta date (stile foto: 2025-01, 2025-08, etc.)
+        # Formatta date
         date_format = mdates.DateFormatter('%Y-%m')
         ax_volume.xaxis.set_major_formatter(date_format)
         
         # Mostra solo alcune date per leggibilità
-        if len(df) > 120:  # 6 mesi con dati giornalieri
+        if len(df) > 120:
             ax_volume.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
         else:
             ax_volume.xaxis.set_major_locator(mdates.MonthLocator())
         
         plt.setp(ax_volume.xaxis.get_majorticklabels(), rotation=45, ha='right',
-                color=WHITE, fontsize=9)
+                color=WHITE, fontsize=8)
         
         # Nascondi ticks x nei grafici superiori
         plt.setp(ax_price.get_xticklabels(), visible=False)
@@ -218,10 +218,9 @@ class TradingAnalyzer:
     def create_comparison_chart(self, df1: pd.DataFrame, symbol1: str, 
                                df2: pd.DataFrame, symbol2: str, period: str):
         """Create comparison chart between two symbols"""
-        # NEON COLORS
-        NEON_GREEN = '#00FF00'
-        NEON_BLUE = '#00FFFF'
-        NEON_ORANGE = '#FF7700'
+        AQUA_MARINE = '#00FF9D'
+        LIGHT_BLUE = '#4CC9F0'
+        LIGHT_ORANGE = '#FF8C42'
         
         # Create figure
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10), sharex=True)
@@ -231,19 +230,19 @@ class TradingAnalyzer:
         norm_price1 = (df1['Close'] / df1['Close'].iloc[0]) * 100
         norm_price2 = (df2['Close'] / df2['Close'].iloc[0]) * 100
         
-        # Plot normalized prices
-        ax1.plot(df1.index, norm_price1, color=NEON_GREEN, linewidth=2.5, 
+        # Plot normalized prices con linee sottili
+        ax1.plot(df1.index, norm_price1, color=AQUA_MARINE, linewidth=1.5, 
                 label=f'{symbol1}', alpha=0.9)
-        ax1.plot(df2.index, norm_price2, color=NEON_BLUE, linewidth=2.5, 
+        ax1.plot(df2.index, norm_price2, color=LIGHT_BLUE, linewidth=1.5, 
                 label=f'{symbol2}', alpha=0.9)
         
         ax1.set_title(f'{symbol1} vs {symbol2} - Performance Comparison ({period} months)',
-                     color='white', fontsize=16, fontweight='bold', pad=15)
-        ax1.set_ylabel('Performance (%)', color='white', fontsize=13)
+                     color='white', fontsize=14, fontweight='bold', pad=15)
+        ax1.set_ylabel('Performance (%)', color='white', fontsize=11)
         ax1.legend(loc='upper left', facecolor='#111111', edgecolor='white',
-                  labelcolor='white', fontsize=11)
-        ax1.grid(True, alpha=0.2, color='gray', linestyle='--')
-        ax1.tick_params(colors='white', labelsize=10)
+                  labelcolor='white', fontsize=10)
+        ax1.grid(True, alpha=0.15, color='gray', linestyle=':', linewidth=0.3)
+        ax1.tick_params(colors='white', labelsize=9)
         ax1.set_facecolor('black')
         
         # Calculate and plot price ratio
@@ -256,29 +255,30 @@ class TradingAnalyzer:
             ratio_series = (df1['Close'].iloc[:min_len].values / 
                           df2['Close'].iloc[:min_len].values)
         
+        # Ratio line sottile
         ax2.plot(df1.index[:len(ratio_series)], ratio_series, 
-                color=NEON_ORANGE, linewidth=2.5)
-        ax2.axhline(y=1.0, color='white', linestyle='--', linewidth=1.2, alpha=0.6)
+                color=LIGHT_ORANGE, linewidth=1.5)
+        ax2.axhline(y=1.0, color='white', linestyle='--', linewidth=0.8, alpha=0.5)
         
-        # Fill between ratio and 1
+        # Fill between ratio and 1 (trasparente)
         ax2.fill_between(df1.index[:len(ratio_series)], ratio_series, 1, 
                         where=ratio_series >= 1,
-                        facecolor=NEON_GREEN, alpha=0.2)
+                        facecolor=AQUA_MARINE, alpha=0.1)
         ax2.fill_between(df1.index[:len(ratio_series)], ratio_series, 1,
                         where=ratio_series < 1,
-                        facecolor='red', alpha=0.2)
+                        facecolor='red', alpha=0.1)
         
-        ax2.set_xlabel('Date', color='white', fontsize=13)
-        ax2.set_ylabel(f'{symbol1}/{symbol2} Ratio', color='white', fontsize=13)
-        ax2.grid(True, alpha=0.2, color='gray', linestyle='--')
-        ax2.tick_params(colors='white', labelsize=10)
+        ax2.set_xlabel('Date', color='white', fontsize=11)
+        ax2.set_ylabel(f'{symbol1}/{symbol2} Ratio', color='white', fontsize=11)
+        ax2.grid(True, alpha=0.15, color='gray', linestyle=':', linewidth=0.3)
+        ax2.tick_params(colors='white', labelsize=9)
         ax2.set_facecolor('black')
         
         # Format x-axis dates
         date_format = mdates.DateFormatter('%b %d')
         ax2.xaxis.set_major_formatter(date_format)
         plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right', 
-                color='white', fontsize=10)
+                color='white', fontsize=9)
         
         # Add performance summary
         perf1 = ((df1['Close'].iloc[-1] / df1['Close'].iloc[0]) - 1) * 100
@@ -289,9 +289,9 @@ class TradingAnalyzer:
                        f'{symbol2}: {perf2:+.2f}% | '
                        f'Difference: {diff:+.2f}%')
         
-        fig.text(0.02, 0.02, summary_text, color='white', fontsize=11,
+        fig.text(0.02, 0.02, summary_text, color='white', fontsize=10,
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='black', 
-                         edgecolor=NEON_GREEN))
+                         edgecolor=AQUA_MARINE))
         
         plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.1, hspace=0.1)
         
@@ -299,11 +299,10 @@ class TradingAnalyzer:
     
     def create_quick_chart(self, df: pd.DataFrame):
         """Create simplified chart for quick analysis"""
-        # Colori stile RMNI
+        AQUA_MARINE = '#00FF9D'  # Verde acqua marina
+        LIGHT_ORANGE = '#FF8C42'
+        LIGHT_BLUE = '#4CC9F0'
         WHITE = '#FFFFFF'
-        ORANGE = '#FF6B00'
-        BLUE = '#00A8FF'
-        GREEN = '#00FF9D'
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), 
                                        gridspec_kw={'height_ratios': [3, 1]},
@@ -314,47 +313,47 @@ class TradingAnalyzer:
         ax1.set_facecolor('black')
         ax2.set_facecolor('black')
         
-        # Price chart
-        ax1.plot(df.index, df['Close'], color=WHITE, linewidth=2.5, label='Prezzo')
+        # Price chart - LINEA SOTTILE VERDE ACQUA
+        ax1.plot(df.index, df['Close'], color=AQUA_MARINE, linewidth=1.5, label='Price')
         if 'SMA_20' in df.columns:
-            ax1.plot(df.index, df['SMA_20'], color=ORANGE, linewidth=2.0, 
+            ax1.plot(df.index, df['SMA_20'], color=LIGHT_ORANGE, linewidth=1.0, 
                     linestyle='--', label='SMA 20')
         if 'SMA_50' in df.columns:
-            ax1.plot(df.index, df['SMA_50'], color=BLUE, linewidth=2.0, 
+            ax1.plot(df.index, df['SMA_50'], color=LIGHT_BLUE, linewidth=1.0, 
                     linestyle='--', label='SMA 50')
         
-        # Evidenzia area sopra SMA20
+        # Evidenzia area sopra SMA20 (trasparente)
         if 'SMA_20' in df.columns:
             above_sma20 = df['Close'] > df['SMA_20']
             ax1.fill_between(df.index, df['SMA_20'], df['Close'],
-                            where=above_sma20, color=GREEN, alpha=0.2,
-                            label='Sopra SMA20')
+                            where=above_sma20, color=AQUA_MARINE, alpha=0.1,
+                            label='Above SMA20')
         
-        ax1.set_title(f'{self.symbol} - Analisi Rapida', color='white', fontsize=14)
-        ax1.legend(loc='upper left', facecolor='black', labelcolor='white', fontsize=10)
-        ax1.grid(True, alpha=0.3, color='gray')
-        ax1.tick_params(colors='white', labelsize=9)
+        ax1.set_title(f'{self.symbol} - Quick Analysis', color='white', fontsize=13)
+        ax1.legend(loc='upper left', facecolor='black', labelcolor='white', fontsize=9)
+        ax1.grid(True, alpha=0.15, color='gray', linewidth=0.3)
+        ax1.tick_params(colors='white', labelsize=8)
         
-        # Volume
+        # Volume bars sottili
         colors_volume = []
         for i in range(len(df)):
             if i == 0:
-                colors_volume.append(GREEN)
+                colors_volume.append(AQUA_MARINE)
             elif df['Close'].iloc[i] >= df['Close'].iloc[i-1]:
-                colors_volume.append(GREEN)
+                colors_volume.append(AQUA_MARINE)
             else:
                 colors_volume.append('#FF0000')
         
-        ax2.bar(df.index, df['Volume'], color=colors_volume, alpha=0.7, width=0.8)
-        ax2.set_xlabel('Date', color='white', fontsize=11)
-        ax2.tick_params(colors='white', labelsize=9)
-        ax2.grid(True, alpha=0.3, color='gray')
+        ax2.bar(df.index, df['Volume'], color=colors_volume, alpha=0.6, width=0.6)
+        ax2.set_xlabel('Date', color='white', fontsize=10)
+        ax2.tick_params(colors='white', labelsize=8)
+        ax2.grid(True, alpha=0.15, color='gray', linewidth=0.3)
         
         # Format dates
         date_format = mdates.DateFormatter('%b %d')
         ax2.xaxis.set_major_formatter(date_format)
         plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right', 
-                color='white', fontsize=9)
+                color='white', fontsize=8)
         
         plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.1, hspace=0.1)
         
