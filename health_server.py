@@ -3,42 +3,53 @@ import http.server
 import socketserver
 import threading
 import os
-import subprocess
 import sys
+import time
+from http import HTTPStatus
 
 class HealthHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path in ['/', '/health', '/ping']:
-            self.send_response(200)
+        if self.path in ['/', '/health', '/ping', '/status']:
+            self.send_response(HTTPStatus.OK)
             self.send_header('Content-type', 'text/plain; charset=utf-8')
             self.end_headers()
-            # Codifica esplicitamente in UTF-8
-            response = '🤖 Telegram Trading Bot is running'.encode('utf-8')
+            response = '🤖 Telegram Trading Bot is running\n'.encode('utf-8')
             self.wfile.write(response)
         else:
-            self.send_response(404)
+            self.send_response(HTTPStatus.NOT_FOUND)
             self.end_headers()
             self.wfile.write(b'Not Found')
     
     def log_message(self, format, *args):
-        # Disabilita logging
+        # Optional: enable for debugging
+        # print(f"[Health Server] {args[0]} {args[1]} {args[2]}")
         pass
 
 def start_health_server():
     """Avvia un server HTTP semplice per health check"""
     port = int(os.environ.get('PORT', 8080))
     
-    with socketserver.TCPServer(('0.0.0.0', port), HealthHandler) as httpd:
-        print(f"✅ Health server started on port {port}")
-        httpd.serve_forever()
+    # Tentativi di avvio
+    for attempt in range(3):
+        try:
+            with socketserver.TCPServer(('0.0.0.0', port), HealthHandler) as httpd:
+                print(f"✅ Health server started on port {port}")
+                print(f"🔗 Local: http://localhost:{port}/health")
+                httpd.serve_forever()
+        except OSError as e:
+            if attempt < 2:
+                print(f"⚠️  Port {port} busy, retrying in 2 seconds...")
+                time.sleep(2)
+            else:
+                print(f"❌ Failed to start health server on port {port}: {e}")
+                raise
+        except KeyboardInterrupt:
+            print("\n🛑 Health server stopped")
+            break
+        except Exception as e:
+            print(f"❌ Health server error: {e}")
+            raise
 
 if __name__ == "__main__":
-    print("🚀 Starting Telegram Trading Bot with health server...")
-    
-    # Avvia il server HTTP in un thread separato
-    health_thread = threading.Thread(target=start_health_server, daemon=True)
-    health_thread.start()
-    
-    # Avvia il bot Telegram (nel thread principale)
-    print("🤖 Starting Telegram bot...")
-    subprocess.run([sys.executable, "telegram_bot.py"])
+    # Solo per testing diretto
+    start_health_server()

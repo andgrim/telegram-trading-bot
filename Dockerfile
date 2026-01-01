@@ -2,17 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
+# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application files
 COPY . .
 
-# Esponi la porta (obbligatorio per Render)
-EXPOSE 8080
+# Create non-root user
+RUN useradd -m -u 1000 botuser && chown -R botuser:botuser /app
+USER botuser
 
-# Usa health_server.py invece di telegram_bot.py
-CMD ["python", "health_server.py"]
+# Start the application
+CMD ["python", "telegram_bot.py"]

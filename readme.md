@@ -1,44 +1,77 @@
-cat > README.md << 'EOF'
-# 🤖 Telegram Trading Bot
+🤖 Telegram Trading Bot
 
-Bot Telegram con interfaccia web Streamlit per analisi trading tecnico.
+A professional Telegram bot for real-time technical analysis with beautiful black-themed charts.
+🌟 Features
+📈 Complete Technical Analysis
 
-## 🌟 Funzionalità
+    Professional charts with black background
 
-### 🤖 Bot Telegram
-- **Ricerca ticker** per nome o simbolo
-- **Analisi tecnica** completa
-- **Grafici** con indicatori (RSI, MACD, Medie Mobili)
-- **Informazioni dettagliate** su aziende
-- **Comandi intuitivi** con menu inline
+    Multiple indicators: RSI, MACD, Moving Averages
 
-### 🌐 Interfaccia Web (Streamlit)
-- **Dashboard interattiva** con tema scuro
-- **Grafici Plotly** interattivi
-- **Analisi multi-periodo** (1, 3, 6, 12 mesi)
-- **Segnali trading** automatici
-- **Export dati** in CSV
+    Automatic trading signals
 
-## 📋 Requisiti
+    Stock comparison feature
 
-- Python 3.8+
-- Token Telegram Bot (da @BotFather)
-- Account Yahoo Finance (gratuito)
+    CSV data export
 
-## 🚀 Installazione Rapida
+🤖 Telegram Bot
 
-```bash
-# 1. Clona il repository
-git clone https://github.com/tuo-username/telegram-trading-bot.git
+    Search tickers by name or symbol
+
+    Multi-period analysis (1, 3, 6, 12 months)
+
+    Interactive inline menus
+
+    User-specific configuration
+
+🚀 Quick Start
+Local Installation
+bash
+
+# 1. Clone the repository
+git clone https://github.com/andgrim/telegram-trading-bot.git
 cd telegram-trading-bot
 
-# 2. Crea ambiente virtuale
+# 2. Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Su Windows: venv\Scripts\activate
+# Windows: venv\Scripts\activate
+# Mac/Linux: source venv/bin/activate
 
-# 3. Installa dipendenze
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Configura il bot
+# 4. Configure the bot
 cp .env.example .env
-# Modifica .env con il tuo token Telegram
+# Edit .env with your Telegram token
+
+Docker Installation
+bash
+
+# Build and run with Docker Compose
+docker-compose up -d
+
+🔧 Configuration
+1. Get a Telegram Bot Token:
+
+    Visit @BotFather on Telegram
+
+    Use /newbot to create a new bot
+
+    Copy the generated token
+
+2. Configure .env file:
+env
+
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+📋 Bot Commands
+text
+
+/start - Start the bot
+/help - Show help guide
+/search <query> - Search for a ticker
+/analyze <symbol> - Complete technical analysis
+/quick <symbol> - Quick analysis
+/compare <sym1> <sym2> - Compare two stocks
+/settings - User settings
+/periods <1,3,6> - Configure analysis periods

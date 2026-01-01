@@ -1,722 +1,737 @@
 import streamlit as st
+import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from trading_analyzer import TradingAnalyzer
 from utils import search_tickers, get_ticker_info
-import pandas as pd
+import yfinance as yf
+from datetime import datetime, timedelta
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import io
+import base64
 
-# Configurazione pagina
+# Page configuration
 st.set_page_config(
-    page_title="Telegram Trading Bot - Web Analysis",
+    page_title="Trading Analysis Dashboard",
     page_icon="📈",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# CSS per tema scuro con miglioramenti
+# Custom CSS for dark theme matching bot style
 st.markdown("""
 <style>
+    /* Main background */
     .stApp {
-        background-color: #0E1117;
-        color: white;
+        background-color: #0a0a0a;
+        color: #ffffff;
     }
     
-    .metric-card {
-        background-color: #262730;
-        padding: 20px;
+    /* Cards like bot messages */
+    .analysis-card {
+        background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
         border-radius: 10px;
+        padding: 20px;
         margin: 10px 0;
-        border-left: 4px solid #FF4B4B;
+        border-left: 4px solid #00a8ff;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }
     
     .ticker-card {
-        background-color: #1E1E1E;
-        padding: 15px;
+        background: #1a1a1a;
         border-radius: 8px;
+        padding: 15px;
         margin: 8px 0;
-        border: 1px solid #444;
+        border: 1px solid #333;
+        transition: all 0.3s ease;
         cursor: pointer;
-        transition: all 0.3s;
     }
     
     .ticker-card:hover {
-        background-color: #2D2D2D;
-        border-color: #FF4B4B;
+        background: #2a2a2a;
+        border-color: #00a8ff;
+        transform: translateY(-2px);
     }
     
-    .positive {
-        color: #00FF00;
+    /* Buttons styled like bot */
+    .stButton > button {
+        background: linear-gradient(135deg, #0088ff 0%, #0055cc 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 10px 20px;
+        font-weight: 500;
+        transition: all 0.3s;
     }
     
-    .negative {
-        color: #FF0000;
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #0055cc 0%, #003399 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 85, 204, 0.4);
     }
     
-    .search-result {
-        background-color: #262730;
-        border-radius: 5px;
+    /* Input fields */
+    .stTextInput > div > div > input {
+        background-color: #1a1a1a;
+        color: white;
+        border: 1px solid #444;
+        border-radius: 8px;
         padding: 10px;
-        margin: 5px 0;
     }
     
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background-color: #262730;
-        border-radius: 4px 4px 0px 0px;
-        padding: 10px 16px;
-    }
-    
-    /* Migliora la visualizzazione delle tabelle */
-    .stDataFrame {
-        background-color: #262730;
+    /* Select boxes */
+    .stSelectbox > div > div {
+        background-color: #1a1a1a;
+        color: white;
         border-radius: 8px;
     }
     
-    /* Migliora input */
-    .stTextInput > div > div > input {
-        background-color: #262730;
-        color: white;
-        border: 1px solid #444;
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+        background-color: #1a1a1a;
+        border-radius: 8px;
+        padding: 5px;
     }
     
-    .stSelectbox > div > div {
-        background-color: #262730;
-        color: white;
+    .stTabs [data-baseweb="tab"] {
+        background-color: #2d2d2d;
+        border-radius: 6px;
+        padding: 10px 20px;
+        color: #aaa;
+        font-weight: 500;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #0088ff !important;
+        color: white !important;
+    }
+    
+    /* Metrics */
+    [data-testid="metric-container"] {
+        background-color: #1a1a1a;
+        border-radius: 10px;
+        padding: 15px;
+        border: 1px solid #333;
+    }
+    
+    /* Dataframe */
+    .stDataFrame {
+        background-color: #1a1a1a;
+        border-radius: 8px;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: #1a1a1a;
+        border-radius: 8px;
+    }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f0f0f 0%, #1a1a1a 100%);
+        border-right: 1px solid #333;
+    }
+    
+    /* Headers */
+    h1, h2, h3, h4, h5, h6 {
+        color: #ffffff;
+    }
+    
+    /* Code blocks */
+    code {
+        background-color: #1a1a1a;
+        color: #00ff9d;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+    
+    /* Divider */
+    hr {
+        border-color: #333;
+        margin: 20px 0;
+    }
+    
+    /* Loading spinner */
+    .stSpinner > div {
+        border-color: #0088ff;
+    }
+    
+    /* Success/Error messages */
+    .stAlert {
+        background-color: #1a1a1a;
+        border: 1px solid #333;
+        border-radius: 8px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-def display_ticker_info(ticker_info: dict):
-    """Mostra informazioni dettagliate del ticker"""
-    if not ticker_info:
+def plot_matplotlib_chart(df, symbol, period):
+    """Generate matplotlib chart in bot style"""
+    # Create figure with black background
+    fig = plt.figure(figsize=(14, 8), facecolor='black')
+    gs = plt.GridSpec(3, 1, hspace=0.3, height_ratios=[3, 1, 1])
+    
+    # Colors matching bot
+    WHITE = '#FFFFFF'
+    ORANGE = '#FF6B00'
+    BLUE = '#00A8FF'
+    GREEN = '#00FF9D'
+    PURPLE = '#9D4EDD'
+    RED = '#FF0033'
+    
+    # 1. Price Chart
+    ax1 = plt.subplot(gs[0])
+    ax1.set_facecolor('black')
+    
+    # Plot price
+    ax1.plot(df.index, df['Close'], color=WHITE, linewidth=2.5, label='Price')
+    
+    # Plot moving averages
+    if 'SMA_20' in df.columns:
+        ax1.plot(df.index, df['SMA_20'], color=ORANGE, linewidth=1.8, label='SMA 20')
+    
+    if 'SMA_50' in df.columns:
+        ax1.plot(df.index, df['SMA_50'], color=BLUE, linewidth=1.8, label='SMA 50')
+    
+    # Fill above SMA20
+    if 'SMA_20' in df.columns:
+        above_sma20 = df['Close'] > df['SMA_20']
+        ax1.fill_between(df.index, df['SMA_20'], df['Close'], 
+                         where=above_sma20, color=GREEN, alpha=0.2, label='Above SMA20')
+    
+    ax1.set_ylabel('Price ($)', color=WHITE, fontsize=11)
+    ax1.tick_params(axis='y', colors=WHITE)
+    ax1.grid(True, alpha=0.15, color='gray', linestyle='--', linewidth=0.5)
+    ax1.legend(loc='upper left', facecolor='black', labelcolor='white', fontsize=9)
+    
+    # 2. MACD
+    ax2 = plt.subplot(gs[1], sharex=ax1)
+    ax2.set_facecolor('black')
+    
+    ax2.plot(df.index, df['MACD'], color=GREEN, linewidth=1.5, label='MACD')
+    ax2.plot(df.index, df['Signal_Line'], color=RED, linewidth=1.5, label='Signal', linestyle='--')
+    
+    # MACD histogram
+    macd_colors = [GREEN if val >= 0 else RED for val in df['MACD_Histogram']]
+    ax2.bar(df.index, df['MACD_Histogram'], color=macd_colors, alpha=0.6, width=0.8)
+    ax2.axhline(y=0, color=WHITE, linewidth=0.8, alpha=0.6)
+    
+    ax2.set_ylabel('MACD', color=WHITE, fontsize=11)
+    ax2.tick_params(colors=WHITE)
+    ax2.grid(True, alpha=0.15, color='gray', linestyle='--', linewidth=0.5)
+    ax2.legend(loc='upper left', facecolor='black', labelcolor='white', fontsize=8)
+    
+    # 3. RSI
+    ax3 = plt.subplot(gs[2], sharex=ax1)
+    ax3.set_facecolor('black')
+    
+    ax3.plot(df.index, df['RSI'], color=PURPLE, linewidth=2.0)
+    ax3.axhline(y=70, color=RED, linestyle='--', linewidth=1.3, alpha=0.8)
+    ax3.axhline(y=30, color=GREEN, linestyle='--', linewidth=1.3, alpha=0.8)
+    
+    # Fill zones
+    ax3.fill_between(df.index, 30, 70, color='gray', alpha=0.1)
+    ax3.fill_between(df.index, 70, 100, color=RED, alpha=0.1)
+    ax3.fill_between(df.index, 0, 30, color=GREEN, alpha=0.1)
+    
+    ax3.set_ylabel('RSI', color=WHITE, fontsize=11)
+    ax3.set_ylim(0, 100)
+    ax3.tick_params(colors=WHITE)
+    ax3.grid(True, alpha=0.15, color='gray', linestyle='--', linewidth=0.5)
+    
+    # Format x-axis
+    ax3.xaxis.set_tick_params(rotation=45)
+    plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45, ha='right', color=WHITE)
+    
+    # Hide x ticks for upper plots
+    plt.setp(ax1.get_xticklabels(), visible=False)
+    plt.setp(ax2.get_xticklabels(), visible=False)
+    
+    # Title
+    price_change = ((df['Close'].iloc[-1] / df['Close'].iloc[0]) - 1) * 100
+    current_price = df['Close'].iloc[-1]
+    title_text = f'{symbol} - {period} months (Price: ${current_price:.2f} | Change: {price_change:+.2f}%)'
+    ax1.set_title(title_text, color=WHITE, fontsize=13, fontweight='bold', pad=15)
+    
+    plt.tight_layout()
+    return fig
+
+def display_ticker_analysis(symbol, period):
+    """Display complete ticker analysis like bot"""
+    analyzer = TradingAnalyzer(symbol)
+    df = analyzer.analyze_period(period)
+    
+    if df is None or df.empty:
+        st.error(f"❌ No data available for {symbol}")
         return
     
+    # Get ticker info
+    ticker_info = get_ticker_info(symbol)
+    
+    # Header with ticker info
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Prezzo Attuale", 
-                 f"${ticker_info.get('current_price', 'N/A'):.2f}" 
-                 if isinstance(ticker_info.get('current_price'), (int, float)) 
-                 else ticker_info.get('current_price', 'N/A'))
+        st.metric("Current Price", f"${ticker_info.get('current_price', 0):.2f}")
     
     with col2:
         prev_close = ticker_info.get('previous_close')
         current = ticker_info.get('current_price')
         if isinstance(prev_close, (int, float)) and isinstance(current, (int, float)):
             change = ((current - prev_close) / prev_close) * 100
-            st.metric("Variazione Giornaliera", 
-                     f"{change:+.2f}%",
-                     delta=f"{change:+.2f}%")
-        else:
-            st.metric("Variazione Giornaliera", "N/A")
+            st.metric("Daily Change", f"{change:+.2f}%", delta=f"{change:+.2f}%")
     
     with col3:
-        st.metric("Volume", 
-                 f"{ticker_info.get('volume', 0):,}" 
-                 if ticker_info.get('volume') 
-                 else "N/A")
+        st.metric("Volume", f"{ticker_info.get('volume', 0):,}")
     
     with col4:
-        st.metric("Market Cap", 
-                 f"${ticker_info.get('market_cap', 0):,.0f}" 
-                 if isinstance(ticker_info.get('market_cap'), (int, float)) 
-                 else "N/A")
+        st.metric("Market Cap", f"${ticker_info.get('market_cap', 0):,.0f}")
     
-    # Altre informazioni
-    with st.expander("📋 Dettagli Azienda"):
-        cols = st.columns(3)
-        with cols[0]:
-            st.write(f"**Settore:** {ticker_info.get('sector', 'N/A')}")
-            st.write(f"**Industria:** {ticker_info.get('industry', 'N/A')}")
-            st.write(f"**Paese:** {ticker_info.get('country', 'N/A')}")
+    # Tabs for different analysis
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📈 Chart", 
+        "📊 Technical", 
+        "🎯 Signals", 
+        "📋 Data", 
+        "ℹ️ Info"
+    ])
+    
+    with tab1:
+        # Matplotlib chart in bot style
+        st.markdown("### 📈 Technical Chart")
+        fig = plot_matplotlib_chart(df, symbol, period)
         
-        with cols[1]:
-            st.write(f"**P/E Ratio:** {ticker_info.get('pe_ratio', 'N/A')}")
-            st.write(f"**Dividend Yield:** {ticker_info.get('dividend_yield', 'N/A')}")
-            st.write(f"**Beta:** {ticker_info.get('beta', 'N/A')}")
+        # Convert to base64 for display
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=120, facecolor='black', bbox_inches='tight')
+        buf.seek(0)
         
-        with cols[2]:
-            st.write(f"**52W High:** ${ticker_info.get('52w_high', 'N/A')}")
-            st.write(f"**52W Low:** ${ticker_info.get('52w_low', 'N/A')}")
-            st.write(f"**Valuta:** {ticker_info.get('currency', 'N/A')}")
+        # Display image
+        st.image(buf, caption=f"{symbol} Technical Analysis - {period} months", use_column_width=True)
+        plt.close(fig)
+        
+        # Download button
+        st.download_button(
+            label="📥 Download Chart",
+            data=buf,
+            file_name=f"{symbol}_chart_{period}m.png",
+            mime="image/png",
+            use_container_width=True
+        )
+    
+    with tab2:
+        st.markdown("### 📊 Technical Analysis")
+        
+        # Technical indicators
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("RSI", f"{df['RSI'].iloc[-1]:.1f}")
+        
+        with col2:
+            macd_val = df['MACD'].iloc[-1]
+            signal_val = df['Signal_Line'].iloc[-1]
+            st.metric("MACD", f"{macd_val:.4f}", 
+                     delta="Bullish" if macd_val > signal_val else "Bearish")
+        
+        with col3:
+            if 'SMA_20' in df.columns and 'SMA_50' in df.columns:
+                sma_trend = "↑" if df['SMA_20'].iloc[-1] > df['SMA_50'].iloc[-1] else "↓"
+                st.metric("SMA Trend", sma_trend)
+        
+        with col4:
+            volume_trend = analyzer._analyze_volume_trend(df)
+            st.metric("Volume", volume_trend)
+        
+        # Detailed technical table
+        st.markdown("#### Technical Indicators History")
+        tech_df = df[['Close', 'SMA_20', 'SMA_50', 'RSI', 'MACD', 'Signal_Line']].tail(20)
+        st.dataframe(tech_df.style.format({
+            'Close': '${:.2f}',
+            'SMA_20': '${:.2f}',
+            'SMA_50': '${:.2f}',
+            'RSI': '{:.1f}',
+            'MACD': '{:.4f}',
+            'Signal_Line': '{:.4f}'
+        }), use_container_width=True)
+    
+    with tab3:
+        st.markdown("### 🎯 Trading Signals")
+        
+        latest = df.iloc[-1]
+        signals = []
+        score = 0
+        
+        # RSI signal
+        if latest['RSI'] < 30:
+            signals.append(("🟢 RSI", "Oversold", 1))
+            score += 1
+        elif latest['RSI'] > 70:
+            signals.append(("🔴 RSI", "Overbought", -1))
+            score -= 1
+        else:
+            signals.append(("⚪ RSI", "Neutral", 0))
+        
+        # MACD signal
+        if latest['MACD'] > latest['Signal_Line']:
+            signals.append(("🟢 MACD", "Bullish", 1))
+            score += 1
+        else:
+            signals.append(("🔴 MACD", "Bearish", -1))
+            score -= 1
+        
+        # Moving Averages signal
+        if 'SMA_20' in latest and 'SMA_50' in latest:
+            if latest['SMA_20'] > latest['SMA_50']:
+                signals.append(("🟢 SMA", "Uptrend", 1))
+                score += 1
+            else:
+                signals.append(("🔴 SMA", "Downtrend", -1))
+                score -= 1
+        
+        # Volume signal
+        volume_trend = analyzer._analyze_volume_trend(df)
+        if volume_trend == "HIGH":
+            signals.append(("🟢 Volume", "High", 1))
+            score += 1
+        elif volume_trend == "LOW":
+            signals.append(("🔴 Volume", "Low", -1))
+            score -= 1
+        else:
+            signals.append(("⚪ Volume", "Normal", 0))
+        
+        # Display signals
+        cols = st.columns(len(signals))
+        for idx, (icon, text, _) in enumerate(signals):
+            with cols[idx]:
+                st.markdown(f"""
+                <div style="text-align: center; padding: 15px; border-radius: 10px; 
+                            background: #1a1a1a; border: 1px solid #333;">
+                    <div style="font-size: 28px; margin-bottom: 5px;">{icon}</div>
+                    <div style="font-weight: 500;">{text}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Overall signal
+        st.markdown("---")
+        st.markdown(f"### 📊 Signal Score: **{score}/4**")
+        
+        if score >= 3:
+            st.success("""
+            🎯 **STRONG BUY SIGNAL**
+            
+            Multiple indicators suggest bullish momentum. Consider long position with proper risk management.
+            """)
+        elif score >= 1:
+            st.info("""
+            📈 **MODERATE BUY SIGNAL**
+            
+            Some bullish indicators present. Watch for entry opportunities with stop loss.
+            """)
+        elif score <= -3:
+            st.error("""
+            ⚠️ **STRONG SELL SIGNAL**
+            
+            Multiple indicators suggest bearish momentum. Consider short position or exiting longs.
+            """)
+        elif score <= -1:
+            st.warning("""
+            📉 **MODERATE SELL SIGNAL**
+            
+            Some bearish indicators present. Be cautious buying and consider taking profits.
+            """)
+        else:
+            st.info("""
+            ⚖️ **NEUTRAL SIGNAL**
+            
+            Mixed or unclear signals. Wait for clearer trend confirmation before entering positions.
+            """)
+    
+    with tab4:
+        st.markdown("### 📋 Historical Data")
+        
+        # Data filters
+        col1, col2 = st.columns(2)
+        with col1:
+            rows = st.slider("Show last N days", 10, 100, 20)
+        
+        with col2:
+            show_cols = st.multiselect(
+                "Columns to display",
+                options=df.columns.tolist(),
+                default=['Open', 'High', 'Low', 'Close', 'Volume', 'RSI']
+            )
+        
+        # Display data
+        st.dataframe(df[show_cols].tail(rows), use_container_width=True)
+        
+        # Download buttons
+        csv = df.to_csv()
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="📥 Download Full Data (CSV)",
+                data=csv,
+                file_name=f"{symbol}_full_data.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        with col2:
+            st.download_button(
+                label="📥 Download Latest Data (CSV)",
+                data=df.tail(rows).to_csv(),
+                file_name=f"{symbol}_latest_{rows}d.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+    
+    with tab5:
+        st.markdown("### ℹ️ Company Information")
+        
+        if ticker_info:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown(f"""
+                **Name:** {ticker_info.get('name', 'N/A')}
+                
+                **Sector:** {ticker_info.get('sector', 'N/A')}
+                
+                **Industry:** {ticker_info.get('industry', 'N/A')}
+                
+                **Country:** {ticker_info.get('country', 'N/A')}
+                
+                **Currency:** {ticker_info.get('currency', 'USD')}
+                """)
+            
+            with col2:
+                st.markdown(f"""
+                **P/E Ratio:** {ticker_info.get('pe_ratio', 'N/A')}
+                
+                **Dividend Yield:** {ticker_info.get('dividend_yield', 'N/A')}
+                
+                **Beta:** {ticker_info.get('beta', 'N/A')}
+                
+                **52W High:** ${ticker_info.get('52w_high', 'N/A')}
+                
+                **52W Low:** ${ticker_info.get('52w_low', 'N/A')}
+                """)
+        else:
+            st.warning("Company information not available")
 
 def main():
-    # Header
-    col1, col2, col3 = st.columns([1, 3, 1])
+    # Title and header
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.image("https://img.icons8.com/color/96/000000/stock-share.png", width=80)
     with col2:
-        st.title("🔍 Telegram Trading Bot - Analisi Mercato")
-        st.markdown("---")
+        st.title("📊 Trading Analysis Dashboard")
+        st.markdown("Professional trading analysis platform - Like your Telegram bot, but on web")
     
-    # Sidebar con ricerca avanzata
+    st.markdown("---")
+    
+    # Sidebar
     with st.sidebar:
-        st.header("🔎 Ricerca Ticker")
+        st.markdown("## 🔍 Search & Analysis")
         
-        # Modalità di ricerca
+        # Search mode
         search_mode = st.radio(
-            "Modalità ricerca:",
-            ["🔤 Ricerca per Nome", "⚡ Inserimento Diretto"],
-            horizontal=True,
+            "Search Mode:",
+            ["🔤 Search by Name", "⚡ Direct Symbol"],
             label_visibility="collapsed"
         )
         
-        symbol = ""
+        selected_symbol = None
         
-        if search_mode == "🔤 Ricerca per Nome":
-            # Ricerca per nome/simbolo
-            search_query = st.text_input(
-                "Cerca azienda o simbolo:",
-                placeholder="Es: Apple, AAPL, Tesla...",
-                key="search_query"
-            )
+        if search_mode == "🔤 Search by Name":
+            query = st.text_input("Search company or symbol:", 
+                                  placeholder="e.g., Apple, AAPL, Tesla...")
             
-            if search_query:
-                with st.spinner("Ricerca in corso..."):
-                    results = search_tickers(search_query, limit=10)
-                    
+            if query and len(query) >= 2:
+                with st.spinner("Searching..."):
+                    results = search_tickers(query, limit=10)
+                
                 if results:
-                    st.success(f"Trovati {len(results)} risultati")
+                    st.success(f"Found {len(results)} results")
                     
-                    # Mostra risultati
-                    for result in results:
-                        col1, col2 = st.columns([1, 3])
-                        with col1:
-                            st.markdown(f"**`{result['symbol']}`**")
-                        with col2:
-                            st.write(result['name'])
-                        
-                        # Pulsante per selezionare
-                        if st.button(f"Seleziona {result['symbol']}", 
-                                   key=f"select_{result['symbol']}"):
-                            st.session_state.selected_symbol = result['symbol']
+                    for result in results[:8]:  # Limit to 8
+                        if st.button(
+                            f"**{result['symbol']}** - {result['name'][:30]}...",
+                            key=f"search_{result['symbol']}",
+                            use_container_width=True
+                        ):
+                            selected_symbol = result['symbol']
+                            st.session_state.selected_symbol = selected_symbol
                             st.rerun()
-                    
-                    st.markdown("---")
-                else:
-                    st.warning("Nessun risultato trovato")
+                elif query:
+                    st.warning("No results found")
         
-        else:  # Inserimento diretto
-            symbol = st.text_input(
-                "Simbolo Ticker:",
-                value=st.session_state.get('selected_symbol', 'AAPL'),
-                placeholder="Es: AAPL, TSLA, BTC-USD",
-                key="direct_symbol"
-            ).upper()
+        else:  # Direct Symbol
+            default_symbol = st.session_state.get('selected_symbol', 'AAPL')
+            symbol = st.text_input("Enter symbol:", 
+                                   value=default_symbol,
+                                   placeholder="e.g., AAPL, TSLA, BTC-USD").upper()
+            
+            if symbol:
+                selected_symbol = symbol
+                st.session_state.selected_symbol = symbol
         
-        # Periodi di analisi
         st.markdown("---")
-        st.header("⚙️ Configurazione Analisi")
+        st.markdown("## ⚙️ Analysis Settings")
         
+        # Period selection
         periods = st.multiselect(
-            "Periodi di analisi:",
+            "Analysis Periods (months):",
             options=[1, 3, 6, 12],
             default=[3, 6],
-            format_func=lambda x: f"{x} mesi"
+            format_func=lambda x: f"{x}M"
         )
         
-        # Intervallo temporale
+        # Interval
         interval = st.selectbox(
-            "Intervallo dati:",
+            "Data Interval:",
             options=["1d", "1wk", "1mo"],
-            index=0,
-            help="Intervallo temporale dei dati (giornaliero, settimanale, mensile)"
+            index=0
         )
         
-        # Indicatori aggiuntivi
         st.markdown("---")
-        st.header("📊 Indicatori")
+        st.markdown("## 🎯 Quick Actions")
         
-        show_indicators = st.multiselect(
-            "Indicatori da mostrare:",
-            options=["BB", "Stochastic", "ATR", "Volume Profile"],
-            default=["BB"],
-            help="Seleziona indicatori aggiuntivi da visualizzare"
-        )
+        # Quick analysis buttons
+        if st.button("📊 Quick Analysis AAPL", use_container_width=True):
+            selected_symbol = "AAPL"
+            st.session_state.selected_symbol = "AAPL"
+            st.rerun()
         
-        # Ticker suggeriti
+        if st.button("⚡ Quick Analysis TSLA", use_container_width=True):
+            selected_symbol = "TSLA"
+            st.session_state.selected_symbol = "TSLA"
+            st.rerun()
+        
+        if st.button("📈 Quick Analysis MSFT", use_container_width=True):
+            selected_symbol = "MSFT"
+            st.session_state.selected_symbol = "MSFT"
+            st.rerun()
+        
         st.markdown("---")
-        st.header("🎯 Ticker Popolari")
+        st.markdown("## 📱 Connect")
         
-        popular_tickers = {
-            "AAPL": "Apple Inc.",
-            "MSFT": "Microsoft",
-            "GOOGL": "Alphabet",
-            "TSLA": "Tesla",
-            "AMZN": "Amazon",
-            "META": "Meta Platforms",
-            "NVDA": "NVIDIA",
-            "JPM": "JPMorgan Chase",
-            "V": "Visa",
-            "JNJ": "Johnson & Johnson"
-        }
-        
-        cols = st.columns(2)
-        for idx, (tick, name) in enumerate(popular_tickers.items()):
-            with cols[idx % 2]:
-                if st.button(f"**{tick}**\n{name[:15]}...", 
-                           key=f"pop_{tick}",
-                           use_container_width=True):
-                    st.session_state.selected_symbol = tick
-                    st.rerun()
+        st.markdown("""
+        **Bot Commands:**
+        - `/search` - Find tickers
+        - `/analyze` - Technical analysis
+        - `/compare` - Compare stocks
+        - `/quick` - Quick analysis
+        """)
     
-    # Contenuto principale
-    if symbol or st.session_state.get('selected_symbol'):
-        current_symbol = symbol if symbol else st.session_state.selected_symbol
+    # Main content area
+    if selected_symbol or st.session_state.get('selected_symbol'):
+        current_symbol = selected_symbol if selected_symbol else st.session_state.selected_symbol
         
-        try:
-            # Informazioni del ticker
-            with st.spinner(f"Recupero informazioni per {current_symbol}..."):
-                ticker_info = get_ticker_info(current_symbol)
-            
-            if ticker_info:
-                # Header con informazioni
-                st.subheader(f"📊 {ticker_info.get('name', current_symbol)} ({current_symbol})")
-                display_ticker_info(ticker_info)
-                
-                # Analisi tecnica
-                st.markdown("---")
-                st.subheader("📈 Analisi Tecnica")
-                
-                analyzer = TradingAnalyzer(current_symbol)
-                
-                # Analisi per ogni periodo
-                all_data = {}
-                summary_data = []
-                
-                for period in sorted(periods):
-                    with st.spinner(f"Analisi {period} mesi..."):
-                        df = analyzer.analyze_period(period)
-                        
-                        if df is not None and not df.empty:
-                            all_data[period] = df
-                            
-                            # Calcola metriche
-                            price_change = ((df['Close'].iloc[-1] / df['Close'].iloc[0]) - 1) * 100
-                            current_rsi = df['RSI'].iloc[-1]
-                            macd_signal = "↑" if df['MACD'].iloc[-1] > 0 else "↓"
-                            
-                            summary_data.append({
-                                'Periodo': f'{period} mesi',
-                                'Prezzo': f"${df['Close'].iloc[-1]:.2f}",
-                                'Variazione': f"{price_change:+.2f}%",
-                                'RSI': f"{current_rsi:.1f}",
-                                'MACD': macd_signal,
-                                'Volume Trend': analyzer._analyze_volume_trend(df)
-                            })
-                
-                if summary_data:
-                    # Tabella riepilogativa
-                    st.dataframe(
-                        pd.DataFrame(summary_data),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                    
-                    # Seleziona periodo per grafico dettagliato
-                    st.markdown("### 📊 Grafico Interattivo")
-                    
-                    selected_period = st.selectbox(
-                        "Seleziona periodo per grafico dettagliato:",
-                        options=sorted(periods),
-                        format_func=lambda x: f"{x} mesi",
-                        key="detailed_chart"
-                    )
-                    
-                    if selected_period in all_data:
-                        df = all_data[selected_period]
-                        
-                        # Tabs per diversi tipi di visualizzazione
-                        tab1, tab2, tab3, tab4 = st.tabs([
-                            "📈 Grafico Lineare",  # Cambiato da "Grafico Completo"
-                            "🔄 Confronto Periodi",
-                            "📋 Dati Raw", 
-                            "🎯 Segnali Trading"
-                        ])
-                        
-                        with tab1:
-                            # Configurazione grafico
-                            col1, col2 = st.columns([3, 1])
-                            with col2:
-                                show_sma = st.checkbox("Medie Mobili", value=True)
-                                show_bollinger = st.checkbox("Bollinger Bands", 
-                                                           value="BB" in show_indicators)
-                                show_volume = st.checkbox("Volume", value=True)
-                                chart_type = st.selectbox(
-                                    "Tipo di grafico:",
-                                    options=["Linea (Close)", "OHLC"],
-                                    index=0
-                                )
-                            
-                            # Creazione del grafico in base alla selezione
-                            if chart_type == "Linea (Close)":
-                                # Grafico a linee semplice (solo prezzo di chiusura)
-                                fig = go.Figure()
-                                
-                                # Linea del prezzo di chiusura
-                                fig.add_trace(go.Scatter(
-                                    x=df.index,
-                                    y=df['Close'],
-                                    mode='lines',
-                                    name='Prezzo',
-                                    line=dict(color='#00FF00', width=2),
-                                    fill='tozeroy',
-                                    fillcolor='rgba(0, 255, 0, 0.1)'
-                                ))
-                                
-                                # Medie mobili se richieste
-                                if show_sma and 'SMA_20' in df.columns:
-                                    fig.add_trace(go.Scatter(
-                                        x=df.index,
-                                        y=df['SMA_20'],
-                                        mode='lines',
-                                        name='SMA 20',
-                                        line=dict(color='orange', width=1, dash='dash')
-                                    ))
-                                
-                                if show_sma and 'SMA_50' in df.columns:
-                                    fig.add_trace(go.Scatter(
-                                        x=df.index,
-                                        y=df['SMA_50'],
-                                        mode='lines',
-                                        name='SMA 50',
-                                        line=dict(color='red', width=1, dash='dash')
-                                    ))
-                                
-                                # Bollinger Bands se richieste
-                                if show_bollinger and 'BB_Upper' in df.columns and 'BB_Lower' in df.columns:
-                                    fig.add_trace(go.Scatter(
-                                        x=df.index,
-                                        y=df['BB_Upper'],
-                                        mode='lines',
-                                        name='BB Upper',
-                                        line=dict(color='blue', width=1),
-                                        fill=None
-                                    ))
-                                    
-                                    fig.add_trace(go.Scatter(
-                                        x=df.index,
-                                        y=df['BB_Lower'],
-                                        mode='lines',
-                                        name='BB Lower',
-                                        line=dict(color='blue', width=1),
-                                        fill='tonexty',
-                                        fillcolor='rgba(0, 0, 255, 0.1)'
-                                    ))
-                                
-                            else:  # OHLC chart
-                                fig = go.Figure(data=[
-                                    go.Ohlc(
-                                        x=df.index,
-                                        open=df['Open'],
-                                        high=df['High'],
-                                        low=df['Low'],
-                                        close=df['Close'],
-                                        name='OHLC'
-                                    )
-                                ])
-                            
-                            # Volume se richiesto (sotto il grafico principale)
-                            if show_volume and 'Volume' in df.columns:
-                                # Crea subplot per volume
-                                from plotly.subplots import make_subplots
-                                
-                                fig = make_subplots(
-                                    rows=2, cols=1,
-                                    shared_xaxes=True,
-                                    vertical_spacing=0.03,
-                                    subplot_titles=(f'Prezzo {current_symbol}', 'Volume'),
-                                    row_heights=[0.7, 0.3]
-                                )
-                                
-                                # Prezzo
-                                if chart_type == "Linea (Close)":
-                                    fig.add_trace(
-                                        go.Scatter(
-                                            x=df.index,
-                                            y=df['Close'],
-                                            mode='lines',
-                                            name='Prezzo',
-                                            line=dict(color='#00FF00', width=2)
-                                        ),
-                                        row=1, col=1
-                                    )
-                                else:
-                                    fig.add_trace(
-                                        go.Ohlc(
-                                            x=df.index,
-                                            open=df['Open'],
-                                            high=df['High'],
-                                            low=df['Low'],
-                                            close=df['Close'],
-                                            name='OHLC'
-                                        ),
-                                        row=1, col=1
-                                    )
-                                
-                                # Medie mobili
-                                if show_sma and 'SMA_20' in df.columns:
-                                    fig.add_trace(
-                                        go.Scatter(
-                                            x=df.index,
-                                            y=df['SMA_20'],
-                                            mode='lines',
-                                            name='SMA 20',
-                                            line=dict(color='orange', width=1, dash='dash')
-                                        ),
-                                        row=1, col=1
-                                    )
-                                
-                                if show_sma and 'SMA_50' in df.columns:
-                                    fig.add_trace(
-                                        go.Scatter(
-                                            x=df.index,
-                                            y=df['SMA_50'],
-                                            mode='lines',
-                                            name='SMA 50',
-                                            line=dict(color='red', width=1, dash='dash')
-                                        ),
-                                        row=1, col=1
-                                    )
-                                
-                                # Volume
-                                colors = ['green' if close >= open else 'red' 
-                                         for close, open in zip(df['Close'], df['Open'])]
-                                
-                                fig.add_trace(
-                                    go.Bar(
-                                        x=df.index,
-                                        y=df['Volume'],
-                                        name='Volume',
-                                        marker_color=colors,
-                                        opacity=0.7
-                                    ),
-                                    row=2, col=1
-                                )
-                            
-                            # Layout del grafico
-                            fig.update_layout(
-                                title=f'{current_symbol} - {selected_period} mesi ({chart_type})',
-                                template='plotly_dark',
-                                height=600,
-                                showlegend=True,
-                                xaxis_title='Data',
-                                yaxis_title='Prezzo ($)',
-                                hovermode='x unified'
-                            )
-                            
-                            st.plotly_chart(fig, use_container_width=True)
-                        
-                        with tab2:
-                            # Confronto tra periodi
-                            if len(all_data) >= 2:
-                                st.write("### 📊 Confronto Prezzi tra Periodi")
-                                
-                                fig_comparison = go.Figure()
-                                
-                                for period, data in all_data.items():
-                                    fig_comparison.add_trace(
-                                        go.Scatter(
-                                            x=data.index,
-                                            y=data['Close'],
-                                            name=f'{period} mesi',
-                                            mode='lines'
-                                        )
-                                    )
-                                
-                                fig_comparison.update_layout(
-                                    title=f'Confronto Prezzi {current_symbol}',
-                                    template='plotly_dark',
-                                    height=500
-                                )
-                                
-                                st.plotly_chart(fig_comparison, use_container_width=True)
-                            else:
-                                st.info("Seleziona almeno 2 periodi per il confronto")
-                        
-                        with tab3:
-                            # Dati grezzi
-                            st.write(f"### 📄 Dati Storici - {selected_period} mesi")
-                            
-                            # Filtri dati
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                rows_to_show = st.slider("Righe da mostrare", 
-                                                        min_value=10, 
-                                                        max_value=100, 
-                                                        value=20)
-                            
-                            with col2:
-                                show_columns = st.multiselect(
-                                    "Colonne da mostrare",
-                                    options=df.columns.tolist(),
-                                    default=['Open', 'High', 'Low', 'Close', 'Volume', 'RSI', 'MACD']
-                                )
-                            
-                            st.dataframe(
-                                df[show_columns].tail(rows_to_show),
-                                use_container_width=True
-                            )
-                            
-                            # Download dati
-                            csv = df.to_csv()
-                            st.download_button(
-                                label="📥 Scarica tutti i dati (CSV)",
-                                data=csv,
-                                file_name=f"{current_symbol}_{selected_period}m_full.csv",
-                                mime="text/csv",
-                                use_container_width=True
-                            )
-                        
-                        with tab4:
-                            # Analisi segnali trading
-                            st.write("### 🎯 Analisi Segnali Trading")
-                            
-                            latest = df.iloc[-1]
-                            
-                            # Creazione segnali
-                            signals = []
-                            score = 0
-                            
-                            # RSI
-                            if latest['RSI'] < 30:
-                                signals.append(("🟢 RSI", "Sovravenduto", 1))
-                                score += 1
-                            elif latest['RSI'] > 70:
-                                signals.append(("🔴 RSI", "Sovracomprato", -1))
-                                score -= 1
-                            else:
-                                signals.append(("⚪ RSI", "Neutrale", 0))
-                            
-                            # MACD
-                            if latest['MACD'] > latest['Signal_Line']:
-                                signals.append(("🟢 MACD", "Rialzista", 1))
-                                score += 1
-                            else:
-                                signals.append(("🔴 MACD", "Ribassista", -1))
-                                score -= 1
-                            
-                            # Medie Mobili
-                            if latest['SMA_20'] > latest['SMA_50']:
-                                signals.append(("🟢 Medie Mobili", "Trend ↑", 1))
-                                score += 1
-                            else:
-                                signals.append(("🔴 Medie Mobili", "Trend ↓", -1))
-                                score -= 1
-                            
-                            # Volume
-                            volume_trend = analyzer._analyze_volume_trend(df)
-                            if volume_trend == "HIGH":
-                                signals.append(("🟢 Volume", "Volume alto", 1))
-                                score += 1
-                            elif volume_trend == "LOW":
-                                signals.append(("🔴 Volume", "Volume basso", -1))
-                                score -= 1
-                            else:
-                                signals.append(("⚪ Volume", "Normale", 0))
-                            
-                            # Mostra segnali
-                            cols = st.columns(len(signals))
-                            for idx, (icon, text, _) in enumerate(signals):
-                                with cols[idx]:
-                                    st.markdown(f"""
-                                    <div style="text-align: center; padding: 10px; border-radius: 5px; background: #262730;">
-                                        <div style="font-size: 24px;">{icon}</div>
-                                        <div>{text}</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                            
-                            # Score complessivo
-                            st.markdown("---")
-                            st.subheader("📊 Punteggio Segnali")
-                            
-                            if score > 1:
-                                st.success(f"""
-                                🎯 **FORTE SEGNALE ACQUISTO**
-                                
-                                **Punteggio:** +{score}
-                                **Raccomandazione:** Considera posizione long
-                                """)
-                            elif score > 0:
-                                st.info(f"""
-                                📈 **LEGGERO SEGNALE ACQUISTO**
-                                
-                                **Punteggio:** +{score}
-                                **Raccomandazione:** Monitora per entry
-                                """)
-                            elif score < -1:
-                                st.error(f"""
-                                ⚠️ **FORTE SEGNALE VENDITA**
-                                
-                                **Punteggio:** {score}
-                                **Raccomandazione:** Considera posizione short
-                                """)
-                            elif score < 0:
-                                st.warning(f"""
-                                📉 **LEGGERO SEGNALE VENDITA**
-                                
-                                **Punteggio:** {score}
-                                **Raccomandazione:** Cautela in acquisto
-                                """)
-                            else:
-                                st.info(f"""
-                                ⚖️ **SEGNALE NEUTRO**
-                                
-                                **Punteggio:** {score}
-                                **Raccomandazione:** Attendi segnali più chiari
-                                """)
-                            
-                            # Disclaimer
-                            st.markdown("---")
-                            st.caption("""
-                            ⚠️ **Disclaimer:** Questi segnali sono generati automaticamente e non costituiscono 
-                            consigli finanziari. Fai sempre la tua ricerca e consulta un professionista 
-                            prima di investire.
-                            """)
-                    
-                    else:
-                        st.warning("Dati non disponibili per il periodo selezionato")
-                else:
-                    st.error(f"Impossibile analizzare {current_symbol}. Verifica il simbolo e riprova.")
-            
-            else:
-                st.error(f"Ticker {current_symbol} non trovato o dati non disponibili")
+        # Header with symbol info
+        st.markdown(f"""
+        <div class="analysis-card">
+            <h2 style="margin: 0; color: #00a8ff;">{current_symbol}</h2>
+            <p style="color: #aaa; margin: 5px 0 0 0;">Technical Analysis Dashboard</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        except Exception as e:
-            st.error(f"❌ Errore nell'analisi di {current_symbol}: {str(e)}")
-            st.info("""
-            Possibili cause:
-            1. Simbolo errato
-            2. Mercato chiuso
-            3. Problemi di connessione
-            4. Ticker non supportato
-            """)
+        # Period selector
+        if 'periods' in locals() and periods:
+            col1, col2, col3, col4 = st.columns(4)
+            for idx, period in enumerate(sorted(periods)):
+                with [col1, col2, col3, col4][idx % 4]:
+                    if st.button(f"{period} Months", key=f"period_{period}", use_container_width=True):
+                        st.session_state.current_period = period
+                        st.rerun()
+            
+            current_period = st.session_state.get('current_period', sorted(periods)[0])
+            
+            # Display analysis for selected period
+            display_ticker_analysis(current_symbol, current_period)
+        else:
+            st.warning("Please select analysis periods in the sidebar")
+    
     else:
-        # Schermata iniziale
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.markdown("""
-            <div style="text-align: center; padding: 50px;">
-                <h1>🔍 Benvenuto!</h1>
-                <p style="font-size: 18px;">Cerca un ticker nella sidebar per iniziare l'analisi</p>
-                <p style="color: #888; margin-top: 30px;">
-                    Utilizza la ricerca per nome o inserisci direttamente il simbolo
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+        # Welcome screen
+        st.markdown("""
+        <div style="text-align: center; padding: 60px 20px;">
+            <h1 style="font-size: 48px; margin-bottom: 20px;">🤖</h1>
+            <h2>Welcome to Trading Analysis Dashboard</h2>
+            <p style="color: #aaa; font-size: 18px; max-width: 600px; margin: 20px auto;">
+                Professional trading analysis platform with technical indicators, 
+                charting tools, and real-time market data.
+            </p>
             
-            # Quick start guide
-            with st.expander("📚 Come usare questa app"):
-                st.markdown("""
-                1. **🔎 Ricerca Ticker**: Usa la ricerca nella sidebar per trovare aziende
-                2. **⚙️ Configura**: Scegli periodi e indicatori
-                3. **📊 Analizza**: Esamina grafici e segnali
-                4. **📥 Esporta**: Scarica i dati per ulteriori analisi
+            <div style="margin-top: 40px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
+                <div style="background: #1a1a1a; padding: 20px; border-radius: 10px; border-left: 4px solid #00ff9d;">
+                    <h3 style="color: #00ff9d;">📈 Technical Analysis</h3>
+                    <p>RSI, MACD, Moving Averages, Volume analysis</p>
+                </div>
                 
-                **Esempi di ticker:**
-                - Azioni: AAPL (Apple), TSLA (Tesla), MSFT (Microsoft)
-                - ETF: SPY (S&P 500), QQQ (Nasdaq 100)
-                - Cripto: BTC-USD (Bitcoin), ETH-USD (Ethereum)
-                """)
+                <div style="background: #1a1a1a; padding: 20px; border-radius: 10px; border-left: 4px solid #00a8ff;">
+                    <h3 style="color: #00a8ff;">📊 Professional Charts</h3>
+                    <p>Interactive charts with multiple timeframes</p>
+                </div>
+                
+                <div style="background: #1a1a1a; padding: 20px; border-radius: 10px; border-left: 4px solid #ff6b00;">
+                    <h3 style="color: #ff6b00;">🎯 Trading Signals</h3>
+                    <p>Automated buy/sell signals with scoring</p>
+                </div>
+                
+                <div style="background: #1a1a1a; padding: 20px; border-radius: 10px; border-left: 4px solid #9d4edd;">
+                    <h3 style="color: #9d4edd;">📋 Data Export</h3>
+                    <p>Download CSV data for further analysis</p>
+                </div>
+            </div>
+            
+            <div style="margin-top: 40px;">
+                <h3>How to start:</h3>
+                <ol style="text-align: left; max-width: 500px; margin: 20px auto; color: #aaa;">
+                    <li>Search for a ticker in the sidebar</li>
+                    <li>Select analysis periods</li>
+                    <li>Explore different analysis tabs</li>
+                    <li>Download data or charts</li>
+                </ol>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Popular tickers grid
+        st.markdown("### 🎯 Popular Tickers")
+        
+        popular_tickers = [
+            ("AAPL", "Apple Inc.", "#333"),
+            ("MSFT", "Microsoft", "#0078d7"),
+            ("GOOGL", "Alphabet", "#4285f4"),
+            ("TSLA", "Tesla", "#e31937"),
+            ("AMZN", "Amazon", "#ff9900"),
+            ("META", "Meta Platforms", "#1877f2"),
+            ("NVDA", "NVIDIA", "#76b900"),
+            ("JPM", "JPMorgan Chase", "#1e5cb3"),
+        ]
+        
+        cols = st.columns(4)
+        for idx, (symbol, name, color) in enumerate(popular_tickers):
+            with cols[idx % 4]:
+                if st.button(
+                    f"**{symbol}**\n{name}",
+                    key=f"pop_{symbol}",
+                    use_container_width=True,
+                    type="secondary"
+                ):
+                    st.session_state.selected_symbol = symbol
+                    st.rerun()
 
 if __name__ == "__main__":
+    # Initialize session state
+    if 'selected_symbol' not in st.session_state:
+        st.session_state.selected_symbol = None
+    if 'current_period' not in st.session_state:
+        st.session_state.current_period = 3
+    
     main()
