@@ -931,10 +931,9 @@ Click buttons below for detailed analysis:
 
 
 def main():
-    # Read token from .env file
+
     TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     
-    # Verify token is set
     if not TELEGRAM_BOT_TOKEN:
         print("❌ ERROR: Telegram bot token not found!")
         print("Make sure you have a .env file with TELEGRAM_BOT_TOKEN")
@@ -943,7 +942,13 @@ def main():
         print("3. Restart the bot")
         return
     
-    # Create and start bot
+    print("🚀 Starting Telegram Trading Bot with health server...")
+    
+    import threading
+    from health_server import start_health_server
+    
+    health_thread = start_health_server()
+    
     bot = TelegramTradingBot(TELEGRAM_BOT_TOKEN)
     bot.run()
 
