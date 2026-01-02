@@ -83,4 +83,4 @@ temp/
 tmp/
 *_temp.*
 *_tmp.*
-EOF
+EOF.gitignore
