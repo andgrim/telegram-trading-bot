@@ -32,7 +32,7 @@ def get_stock_data(symbol: str, period_months: int = 3, interval: str = "1d") ->
             start_date = end_date - timedelta(days=period_months * 31)
             df = ticker.history(start=start_date, end=end_date, interval="1d")
         
-        logger.info(f"✅ Downloaded {len(df)} rows for {symbol}")
+        logger.info(f"✅ Downloaded {len(df)} rows for {symbol} for {period_months} months")
         return df if not df.empty else pd.DataFrame()
         
     except Exception as e:
