@@ -313,26 +313,85 @@ class TelegramTradingBot:
             await context.bot.send_message(chat_id, f"❌ Error analyzing {symbol}")
     
     async def show_chart(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str, period: int):
-        """Show ticker chart with back button"""
+        """Show ticker chart with back button - ENHANCED VERSION"""
         try:
             await query.answer()
             
             await query.edit_message_text(f"📊 Creating chart for {symbol} ({period} months)...")
             
+            logger.info(f"🚀 Starting chart creation for {symbol}, period {period} months")
+            
             analyzer = TradingAnalyzer(symbol)
+            
+            # Get data
+            logger.info(f"📥 Getting data for {symbol}, {period} months")
             df = analyzer.analyze_period(period)
             
-            if df is None or df.empty:
+            # DEBUG: Log detailed info
+            if df is None:
+                logger.error(f"❌ DataFrame is None for {symbol}")
                 await query.edit_message_text("❌ No data available for chart")
+                return
+                
+            if df.empty:
+                logger.error(f"❌ DataFrame is empty for {symbol}")
+                await query.edit_message_text("❌ No data available for chart")
+                return
+                
+            logger.info(f"✅ DataFrame loaded - Shape: {df.shape}, Columns: {df.columns.tolist()}")
+            logger.info(f"📊 Sample data - First row: {df.iloc[0].to_dict() if not df.empty else 'Empty'}")
+            logger.info(f"📊 Sample data - Last row: {df.iloc[-1].to_dict() if not df.empty else 'Empty'}")
+            
+            # Check if required columns exist
+            required_cols = ['Close']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            if missing_cols:
+                logger.error(f"❌ Missing required columns: {missing_cols}")
+                logger.error(f"📋 Available columns: {df.columns.tolist()}")
+                await query.edit_message_text(f"❌ Missing data columns: {missing_cols}")
                 return
             
             # Create matplotlib figure
-            fig = analyzer.create_technical_chart(df, str(period))
+            logger.info("🎨 Creating technical chart...")
+            try:
+                fig = analyzer.create_technical_chart(df, str(period))
+            except Exception as chart_error:
+                logger.error(f"❌ Error in create_technical_chart: {chart_error}")
+                # Try fallback
+                fig = analyzer._create_fallback_chart(df, str(period))
+            
+            if fig is None:
+                logger.error("❌ Figure is None!")
+                await query.edit_message_text("❌ Error creating chart (figure is None)")
+                return
+                
+            logger.info(f"✅ Figure created successfully, size: {fig.get_size_inches()}")
             
             # Save to bytes
-            buf = BytesIO()
-            fig.savefig(buf, format='png', dpi=120, facecolor='black')
-            buf.seek(0)
+            try:
+                buf = BytesIO()
+                logger.info("💾 Saving figure to buffer...")
+                
+                # Save with various options
+                try:
+                    fig.savefig(buf, format='png', dpi=120, facecolor='black', bbox_inches='tight')
+                except:
+                    # Try without bbox_inches
+                    fig.savefig(buf, format='png', dpi=100, facecolor='black')
+                
+                buf.seek(0)
+                buffer_size = len(buf.getvalue())
+                logger.info(f"✅ Buffer created, size: {buffer_size} bytes")
+                
+                if buffer_size == 0:
+                    logger.error("❌ Buffer is empty!")
+                    await query.edit_message_text("❌ Error: Chart buffer is empty")
+                    return
+                    
+            except Exception as e:
+                logger.error(f"❌ Error saving figure to buffer: {e}")
+                await query.edit_message_text("❌ Error saving chart image")
+                return
             
             # Create back button keyboard
             keyboard = [
@@ -342,20 +401,38 @@ class TelegramTradingBot:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            # Send photo with caption and back button
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=buf,
-                caption=f"📈 {symbol} Chart - {period} months\nPrice, Volume, Moving Averages, MACD, RSI",
-                reply_markup=reply_markup
-            )
+            # Send photo
+            logger.info("📤 Sending photo to Telegram...")
+            try:
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=buf,
+                    caption=f"📈 {symbol} Chart - {period} months\nPrice, Volume, Moving Averages, MACD, RSI",
+                    reply_markup=reply_markup
+                )
+                logger.info(f"✅ Chart sent successfully for {symbol}")
+                
+            except Exception as send_error:
+                logger.error(f"❌ Error sending photo: {send_error}")
+                # Try sending as document
+                buf.seek(0)
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=buf,
+                    filename=f"{symbol}_chart_{period}m.png",
+                    caption=f"📈 {symbol} Chart - {period} months",
+                    reply_markup=reply_markup
+                )
+                logger.info(f"✅ Chart sent as document for {symbol}")
             
             # Close the figure to free memory
             plt.close(fig)
+            logger.info(f"✅ Chart process completed for {symbol}")
             
         except Exception as e:
-            logger.error(f"Chart error: {e}")
-            await query.edit_message_text("❌ Error creating chart")
+            logger.error(f"❌ Error in show_chart: {e}", exc_info=True)
+            error_msg = str(e)[:100]  # Limit error message length
+            await query.edit_message_text(f"❌ Error creating chart: {error_msg}")
     
     async def show_menu(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
         """Show menu for a specific symbol"""
@@ -984,8 +1061,8 @@ Click buttons below for detailed analysis:
                 start_price = df['Close'].iloc[0]
                 end_price = df['Close'].iloc[-1]
                 price_change = ((end_price / start_price) - 1) * 100
-                current_rsi = df['RSI'].iloc[-1]
-                macd_signal = "↑" if df['MACD'].iloc[-1] > df['Signal_Line'].iloc[-1] else "↓"
+                current_rsi = df['RSI'].iloc[-1] if 'RSI' in df.columns else 0
+                macd_signal = "↑" if df['MACD'].iloc[-1] > df['Signal_Line'].iloc[-1] else "↓" if 'MACD' in df.columns else "N/A"
                 volume_trend = analyzer._analyze_volume_trend(df)
                 
                 message += f"**{period} Months:**\n"
