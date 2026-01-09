@@ -9,6 +9,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+import matplotlib
+matplotlib.rcParams['text.usetex'] = False
+
 class TradingAnalyzer:
     def __init__(self, symbol: str):
         self.symbol = symbol.upper()
@@ -36,6 +39,17 @@ class TradingAnalyzer:
         except Exception as e:
             logger.error(f"Error analyzing {self.symbol}: {e}")
             return None
+    
+    def _check_indicators_exist(self, df: pd.DataFrame) -> dict:
+        """Check which indicators are available in the DataFrame"""
+        available = {
+            'sma_20': 'SMA_20' in df.columns and not df['SMA_20'].isna().all(),
+            'sma_50': 'SMA_50' in df.columns and not df['SMA_50'].isna().all(),
+            'macd': 'MACD' in df.columns and not df['MACD'].isna().all(),
+            'signal_line': 'Signal_Line' in df.columns and not df['Signal_Line'].isna().all(),
+            'rsi': 'RSI' in df.columns and not df['RSI'].isna().all()
+        }
+        return available
     
     def _analyze_volume_trend(self, df: pd.DataFrame) -> str:
         """Analyze volume trend"""
@@ -67,17 +81,22 @@ class TradingAnalyzer:
             return 0
     
     def _get_macd_signal(self, df: pd.DataFrame) -> str:
-        """Determine MACD signal"""
+        """Determine MACD signal with safe checks"""
         if 'MACD' not in df.columns or 'Signal_Line' not in df.columns:
             return "N/A"
         
         try:
+            # Check for NaN values
+            if pd.isna(df['MACD'].iloc[-1]) or pd.isna(df['Signal_Line'].iloc[-1]):
+                return "N/A"
+                
             if df['MACD'].iloc[-1] > df['Signal_Line'].iloc[-1]:
                 return "↑"  # BULLISH
             elif df['MACD'].iloc[-1] < df['Signal_Line'].iloc[-1]:
                 return "↓"  # BEARISH
             return "→"  # NEUTRAL
-        except:
+        except Exception as e:
+            logger.warning(f"MACD signal error: {e}")
             return "N/A"
     
     def create_technical_chart(self, df: pd.DataFrame, period: str):
@@ -128,15 +147,15 @@ class TradingAnalyzer:
             price_change = self._calculate_price_change(df)
             current_price = df['Close'].iloc[-1]
             start_price = df['Close'].iloc[0]
-            title_text = (f'{self.symbol} - {period} months analysis\n'
-                         f'Current: ${current_price:.2f} | '
-                         f'Change: {price_change:+.2f}% | '
-                         f'From: ${start_price:.2f}')
+            title_text = (f'{self.symbol} - {period} months\n'
+                        f'Price: {current_price:.2f} USD | '
+                        f'Change: {price_change:+.2f}% | '
+                        f'Start: {start_price:.2f} USD')
             ax_price.set_title(title_text, fontsize=13, color=WHITE, 
-                              fontweight='bold', pad=12, loc='left')
+                            fontweight='bold', pad=12, loc='left')
             
             # Labels and ticks
-            ax_price.set_ylabel('Price ($)', color=WHITE, fontsize=10)
+            ax_price.set_ylabel('Price (USD)', color=WHITE, fontsize=10)
             ax_price.tick_params(axis='y', colors=WHITE, labelsize=8)
             ax_price.tick_params(axis='x', colors=WHITE, labelsize=8)
             
@@ -151,8 +170,15 @@ class TradingAnalyzer:
             ax_macd = fig.add_subplot(gs[1], sharex=ax_price)
             ax_macd.set_facecolor('black')
             
-            # Check if MACD columns exist
-            if 'MACD' in df.columns and 'Signal_Line' in df.columns:
+            # Check if MACD columns exist and have valid data
+            has_macd_data = (
+                'MACD' in df.columns and 
+                'Signal_Line' in df.columns and 
+                not df['MACD'].isna().all() and 
+                not df['Signal_Line'].isna().all()
+            )
+            
+            if has_macd_data:
                 # MACD thin lines
                 ax_macd.plot(df.index, df['MACD'], color=AQUA_MARINE, linewidth=1.2,
                             label='MACD', alpha=0.8, zorder=3)
@@ -160,50 +186,65 @@ class TradingAnalyzer:
                             label='Signal', alpha=0.8, linestyle='--', zorder=2)
                 
                 # MACD thin histogram
-                if 'MACD_Histogram' in df.columns:
-                    macd_colors = [AQUA_MARINE if val >= 0 else RED for val in df['MACD_Histogram']]
-                    ax_macd.bar(df.index, df['MACD_Histogram'], color=macd_colors,
+                if 'MACD_Histogram' in df.columns and not df['MACD_Histogram'].isna().all():
+                    # Replace NaN with 0 for histogram
+                    hist_data = df['MACD_Histogram'].fillna(0)
+                    macd_colors = [AQUA_MARINE if val >= 0 else RED for val in hist_data]
+                    ax_macd.bar(df.index, hist_data, color=macd_colors,
                                alpha=0.5, width=0.6, edgecolor='none', linewidth=0.5, zorder=1)
-            
-            # Zero thin line
-            ax_macd.axhline(y=0, color=WHITE, linestyle='-', linewidth=0.5, alpha=0.4)
-            
-            # Labels
-            ax_macd.set_ylabel('MACD Signal', color=WHITE, fontsize=10)
-            ax_macd.tick_params(colors=WHITE, labelsize=8)
-            ax_macd.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3)
-            ax_macd.legend(loc='upper left', facecolor='#111111', edgecolor=AQUA_MARINE,
-                          labelcolor=WHITE, fontsize=7, framealpha=0.9)
+                
+                # Zero thin line
+                ax_macd.axhline(y=0, color=WHITE, linestyle='-', linewidth=0.5, alpha=0.4)
+                
+                # Labels
+                ax_macd.set_ylabel('MACD Signal', color=WHITE, fontsize=10)
+                ax_macd.tick_params(colors=WHITE, labelsize=8)
+                ax_macd.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3)
+                ax_macd.legend(loc='upper left', facecolor='#111111', edgecolor=AQUA_MARINE,
+                              labelcolor=WHITE, fontsize=7, framealpha=0.9)
+            else:
+                # Display message instead of chart
+                ax_macd.text(0.5, 0.5, 'MACD Data Not Available\n(Insufficient data: need ≥26 days)',
+                            horizontalalignment='center', verticalalignment='center',
+                            transform=ax_macd.transAxes, color=WHITE, fontsize=9)
+                ax_macd.set_ylabel('MACD', color=WHITE, fontsize=10)
+                ax_macd.set_ylim(-1, 1)
+                ax_macd.tick_params(colors=WHITE, labelsize=8)
+                ax_macd.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3)
             
             # ========== 3. RSI CHART (THIN LINE) ==========
             ax_rsi = fig.add_subplot(gs[2], sharex=ax_price)
             ax_rsi.set_facecolor('black')
             
             # RSI thin line
-            if 'RSI' in df.columns:
+            if 'RSI' in df.columns and not df['RSI'].isna().all():
                 ax_rsi.plot(df.index, df['RSI'], color=PURPLE, linewidth=1.2, alpha=0.8)
-            
-            # RSI thin levels
-            ax_rsi.axhline(y=70, color=RED, linestyle='--', linewidth=0.8, alpha=0.6)
-            ax_rsi.axhline(y=30, color=AQUA_MARINE, linestyle='--', linewidth=0.8, alpha=0.6)
-            
-            # Zone colorate (transparent)
-            ax_rsi.fill_between(df.index, 30, 70, color='gray', alpha=0.05)
-            ax_rsi.fill_between(df.index, 70, 100, color=RED, alpha=0.05)
-            ax_rsi.fill_between(df.index, 0, 30, color=AQUA_MARINE, alpha=0.05)
-            
-            # Labels
-            ax_rsi.text(0.02, 1.02, 'Overbought (70)', transform=ax_rsi.transAxes,
-                       color=RED, fontsize=7, verticalalignment='bottom')
-            ax_rsi.text(0.02, -0.02, 'Oversold (30)', transform=ax_rsi.transAxes,
-                       color=AQUA_MARINE, fontsize=7, verticalalignment='top')
-            
-            # RSI current value
-            if 'RSI' in df.columns:
+                
+                # RSI current value
                 last_rsi = df['RSI'].iloc[-1]
-                ax_rsi.text(0.98, 0.95, f'RSI: {last_rsi:.1f}', transform=ax_rsi.transAxes,
-                           color=WHITE, fontsize=8, fontweight='bold', ha='right',
-                           bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.8))
+                if not pd.isna(last_rsi):
+                    ax_rsi.text(0.98, 0.95, f'RSI: {last_rsi:.1f}', transform=ax_rsi.transAxes,
+                               color=WHITE, fontsize=8, fontweight='bold', ha='right',
+                               bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.8))
+                
+                # RSI thin levels
+                ax_rsi.axhline(y=70, color=RED, linestyle='--', linewidth=0.8, alpha=0.6)
+                ax_rsi.axhline(y=30, color=AQUA_MARINE, linestyle='--', linewidth=0.8, alpha=0.6)
+                
+                # Zone colorate (transparent)
+                ax_rsi.fill_between(df.index, 30, 70, color='gray', alpha=0.05)
+                ax_rsi.fill_between(df.index, 70, 100, color=RED, alpha=0.05)
+                ax_rsi.fill_between(df.index, 0, 30, color=AQUA_MARINE, alpha=0.05)
+                
+                # Labels
+                ax_rsi.text(0.02, 1.02, 'Overbought (70)', transform=ax_rsi.transAxes,
+                           color=RED, fontsize=7, verticalalignment='bottom')
+                ax_rsi.text(0.02, -0.02, 'Oversold (30)', transform=ax_rsi.transAxes,
+                           color=AQUA_MARINE, fontsize=7, verticalalignment='top')
+            else:
+                ax_rsi.text(0.5, 0.5, 'RSI Data Not Available\n(Insufficient data: need ≥14 days)',
+                            horizontalalignment='center', verticalalignment='center',
+                            transform=ax_rsi.transAxes, color=WHITE, fontsize=9)
             
             ax_rsi.set_ylabel('RSI', color=WHITE, fontsize=10)
             ax_rsi.set_ylim(0, 100)

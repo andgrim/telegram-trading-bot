@@ -27,6 +27,40 @@ class TelegramTradingBot:
         self.token = token
         self.user_data = {}
     
+    async def _update_or_resend_message(self, query, context, text, reply_markup=None, parse_mode='Markdown'):
+        """
+        Funzione helper per gestire l'aggiornamento dei messaggi, sia foto che testo.
+        Se il messaggio corrente è una foto, invia un nuovo messaggio.
+        Se è testo, modifica il messaggio esistente.
+        """
+        try:
+            if query.message.photo:
+                # Se è una foto, invia un NUOVO messaggio di testo
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode
+                )
+            else:
+                # Se è già testo, modifica normalmente
+                await query.edit_message_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Error in _update_or_resend_message: {e}")
+            # Fallback: invia sempre un nuovo messaggio
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+            return False
+    
     def _create_back_button(self, symbol: str = None, target: str = "analysis"):
         """Create back button keyboard"""
         keyboard = []
@@ -69,7 +103,16 @@ class TelegramTradingBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text(welcome_message, reply_markup=reply_markup)
+        if update.message:
+            await update.message.reply_text(welcome_message, reply_markup=reply_markup)
+        elif update.callback_query:
+            await update.callback_query.answer()
+            await self._update_or_resend_message(
+                update.callback_query,
+                context,
+                welcome_message,
+                reply_markup
+            )
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Help command"""
@@ -106,28 +149,45 @@ class TelegramTradingBot:
         if update.message:
             await update.message.reply_text(help_text, parse_mode='Markdown', reply_markup=reply_markup)
         elif update.callback_query:
-            await update.callback_query.edit_message_text(help_text, parse_mode='Markdown', reply_markup=reply_markup)
+            await update.callback_query.answer()
+            await self._update_or_resend_message(
+                update.callback_query,
+                context,
+                help_text,
+                reply_markup,
+                'Markdown'
+            )
     
     async def search_ticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Search ticker by name or symbol"""
-        query = ' '.join(context.args)
+        query_text = ' '.join(context.args)
         
-        if not query and update.message:
+        if not query_text and update.message:
             await update.message.reply_text("❌ Specify what to search:\n/search Apple\n/search AAPL\n/search TSLA")
             return
-        elif not query and update.callback_query:
-            await update.callback_query.edit_message_text("Please enter a search query:")
+        elif not query_text and update.callback_query:
+            await update.callback_query.answer()
+            await self._update_or_resend_message(
+                update.callback_query,
+                context,
+                "Please enter a search query:"
+            )
             return
         
         if update.message:
-            await update.message.reply_text(f"🔍 Searching for '{query}'...")
+            await update.message.reply_text(f"🔍 Searching for '{query_text}'...")
             chat_id = update.message.chat_id
         else:
-            await update.callback_query.edit_message_text(f"🔍 Searching for '{query}'...")
+            await update.callback_query.answer()
+            await self._update_or_resend_message(
+                update.callback_query,
+                context,
+                f"🔍 Searching for '{query_text}'..."
+            )
             chat_id = update.callback_query.message.chat_id
         
         try:
-            results = search_tickers(query, limit=10)
+            results = search_tickers(query_text, limit=10)
             
             if not results:
                 await context.bot.send_message(chat_id, "❌ No results found")
@@ -173,7 +233,12 @@ class TelegramTradingBot:
             await update.message.reply_text(f"📊 Analyzing {symbol}...")
             chat_id = update.message.chat_id
         else:
-            await update.callback_query.edit_message_text(f"📊 Analyzing {symbol}...")
+            await update.callback_query.answer()
+            await self._update_or_resend_message(
+                update.callback_query,
+                context,
+                f"📊 Analyzing {symbol}..."
+            )
             chat_id = update.callback_query.message.chat_id
         
         try:
@@ -249,7 +314,16 @@ class TelegramTradingBot:
                     # CORRECT: Calculate price change from start to end of THIS period
                     price_change = ((df['Close'].iloc[end_idx] / df['Close'].iloc[start_idx]) - 1) * 100
                     current_rsi = df['RSI'].iloc[end_idx] if 'RSI' in df.columns else 50
-                    macd_signal = "↑" if df['MACD'].iloc[end_idx] > df['Signal_Line'].iloc[end_idx] else "↓" if 'MACD' in df.columns else "N/A"
+                    # Safe MACD signal check
+                    if 'MACD' in df.columns and 'Signal_Line' in df.columns:
+                        macd_val = df['MACD'].iloc[end_idx]
+                        signal_val = df['Signal_Line'].iloc[end_idx]
+                        if not pd.isna(macd_val) and not pd.isna(signal_val):
+                            macd_signal = "↑" if macd_val > signal_val else "↓"
+                        else:
+                            macd_signal = "N/A"
+                    else:
+                        macd_signal = "N/A"
                     volume_trend = analyzer._analyze_volume_trend(df)
                     
                     summary_data.append({
@@ -317,7 +391,11 @@ class TelegramTradingBot:
         try:
             await query.answer()
             
-            await query.edit_message_text(f"📊 Creating chart for {symbol} ({period} months)...")
+            await self._update_or_resend_message(
+                query,
+                context,
+                f"📊 Creating chart for {symbol} ({period} months)..."
+            )
             
             logger.info(f"🚀 Starting chart creation for {symbol}, period {period} months")
             
@@ -330,25 +408,34 @@ class TelegramTradingBot:
             # DEBUG: Log detailed info
             if df is None:
                 logger.error(f"❌ DataFrame is None for {symbol}")
-                await query.edit_message_text("❌ No data available for chart")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    "❌ No data available for chart"
+                )
                 return
                 
             if df.empty:
                 logger.error(f"❌ DataFrame is empty for {symbol}")
-                await query.edit_message_text("❌ No data available for chart")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    "❌ No data available for chart"
+                )
                 return
                 
             logger.info(f"✅ DataFrame loaded - Shape: {df.shape}, Columns: {df.columns.tolist()}")
-            logger.info(f"📊 Sample data - First row: {df.iloc[0].to_dict() if not df.empty else 'Empty'}")
-            logger.info(f"📊 Sample data - Last row: {df.iloc[-1].to_dict() if not df.empty else 'Empty'}")
             
             # Check if required columns exist
             required_cols = ['Close']
             missing_cols = [col for col in required_cols if col not in df.columns]
             if missing_cols:
                 logger.error(f"❌ Missing required columns: {missing_cols}")
-                logger.error(f"📋 Available columns: {df.columns.tolist()}")
-                await query.edit_message_text(f"❌ Missing data columns: {missing_cols}")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    f"❌ Missing data columns: {missing_cols}"
+                )
                 return
             
             # Create matplotlib figure
@@ -362,7 +449,11 @@ class TelegramTradingBot:
             
             if fig is None:
                 logger.error("❌ Figure is None!")
-                await query.edit_message_text("❌ Error creating chart (figure is None)")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    "❌ Error creating chart (figure is None)"
+                )
                 return
                 
             logger.info(f"✅ Figure created successfully, size: {fig.get_size_inches()}")
@@ -385,12 +476,20 @@ class TelegramTradingBot:
                 
                 if buffer_size == 0:
                     logger.error("❌ Buffer is empty!")
-                    await query.edit_message_text("❌ Error: Chart buffer is empty")
+                    await self._update_or_resend_message(
+                        query,
+                        context,
+                        "❌ Error: Chart buffer is empty"
+                    )
                     return
                     
             except Exception as e:
                 logger.error(f"❌ Error saving figure to buffer: {e}")
-                await query.edit_message_text("❌ Error saving chart image")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    "❌ Error saving chart image"
+                )
                 return
             
             # Create back button keyboard
@@ -432,10 +531,14 @@ class TelegramTradingBot:
         except Exception as e:
             logger.error(f"❌ Error in show_chart: {e}", exc_info=True)
             error_msg = str(e)[:100]  # Limit error message length
-            await query.edit_message_text(f"❌ Error creating chart: {error_msg}")
+            await self._update_or_resend_message(
+                query,
+                context,
+                f"❌ Error creating chart: {error_msg}"
+            )
     
     async def show_menu(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        """Show menu for a specific symbol"""
+        """Show menu for a specific symbol - gestisce sia foto che testo"""
         try:
             await query.answer()
             
@@ -463,16 +566,25 @@ class TelegramTradingBot:
             ]
             
             reply_markup = InlineKeyboardMarkup(keyboard)
+            message_text = f"📊 **{symbol} - Analysis Menu**\n\nChoose an option:"
             
-            await query.edit_message_text(
-                f"📊 **{symbol} - Analysis Menu**\n\nChoose an option:",
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
+            await self._update_or_resend_message(
+                query,
+                context,
+                message_text,
+                reply_markup,
+                'Markdown'
             )
             
         except Exception as e:
             logger.error(f"Menu error: {e}")
-            await query.edit_message_text("❌ Error loading menu")
+            # Fallback: invia sempre nuovo messaggio
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"📊 **{symbol} - Analysis Menu**\n\nChoose an option:",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
     
     async def compare_tickers(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Compare two tickers"""
@@ -490,7 +602,12 @@ class TelegramTradingBot:
             await update.message.reply_text(f"📊 Comparing {symbol1} vs {symbol2}...")
             chat_id = update.message.chat_id
         else:
-            await update.callback_query.edit_message_text(f"📊 Comparing {symbol1} vs {symbol2}...")
+            await update.callback_query.answer()
+            await self._update_or_resend_message(
+                update.callback_query,
+                context,
+                f"📊 Comparing {symbol1} vs {symbol2}..."
+            )
             chat_id = update.callback_query.message.chat_id
         
         try:
@@ -583,13 +700,21 @@ class TelegramTradingBot:
         try:
             await query.answer()
             
-            await query.edit_message_text(f"🎯 Analyzing signals for {symbol}...")
+            await self._update_or_resend_message(
+                query,
+                context,
+                f"🎯 Analyzing signals for {symbol}..."
+            )
             
             analyzer = TradingAnalyzer(symbol)
             df = analyzer.analyze_period(3)  # Use 3 months for signals
             
             if df is None or df.empty:
-                await query.edit_message_text("❌ No data available for signals")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    "❌ No data available for signals"
+                )
                 return
             
             latest = df.iloc[-1]
@@ -668,28 +793,42 @@ class TelegramTradingBot:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(
-                signals_text, 
-                parse_mode='Markdown',
-                reply_markup=reply_markup
+            await self._update_or_resend_message(
+                query,
+                context,
+                signals_text,
+                reply_markup,
+                'Markdown'
             )
             
         except Exception as e:
             logger.error(f"Signals error: {e}")
-            await query.edit_message_text("❌ Error analyzing signals")
+            await self._update_or_resend_message(
+                query,
+                context,
+                "❌ Error analyzing signals"
+            )
     
     async def show_data(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
         """Show raw ticker data with back button"""
         try:
             await query.answer()
             
-            await query.edit_message_text(f"📋 Retrieving data for {symbol}...")
+            await self._update_or_resend_message(
+                query,
+                context,
+                f"📋 Retrieving data for {symbol}..."
+            )
             
             analyzer = TradingAnalyzer(symbol)
             df = analyzer.analyze_period(1)  # 1 month of data
             
             if df is None or df.empty:
-                await query.edit_message_text("❌ No data available")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    "❌ No data available"
+                )
                 return
             
             # Prepare last 10 rows
@@ -721,15 +860,21 @@ class TelegramTradingBot:
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(
+            await self._update_or_resend_message(
+                query,
+                context,
                 data_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
+                reply_markup,
+                'Markdown'
             )
             
         except Exception as e:
             logger.error(f"Data error: {e}")
-            await query.edit_message_text("❌ Error retrieving data")
+            await self._update_or_resend_message(
+                query,
+                context,
+                "❌ Error retrieving data"
+            )
     
     async def download_data(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
         """Prepare CSV data download with back button"""
@@ -828,10 +973,12 @@ Available: 1d, 1wk, 1mo
                 parse_mode='Markdown'
             )
         else:
-            await update.callback_query.edit_message_text(
+            await self._update_or_resend_message(
+                update.callback_query,
+                context,
                 settings_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
+                reply_markup,
+                'Markdown'
             )
     
     async def set_periods_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -883,7 +1030,12 @@ Available: 1d, 1wk, 1mo
             await update.message.reply_text(f"⚡ Quick analyzing {symbol}...")
         else:
             chat_id = update.callback_query.message.chat_id
-            await update.callback_query.edit_message_text(f"⚡ Quick analyzing {symbol}...")
+            await update.callback_query.answer()
+            await self._update_or_resend_message(
+                update.callback_query,
+                context,
+                f"⚡ Quick analyzing {symbol}..."
+            )
         
         try:
             ticker_info = get_ticker_info(symbol)
@@ -968,14 +1120,18 @@ Available: 1d, 1wk, 1mo
             await context.bot.send_message(chat_id, f"❌ Quick analysis error for {symbol}")
     
     async def analyze_ticker_from_callback(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        """Analyze ticker from callback with CORRECT calculations"""
+        """Analyze ticker from callback - gestisce sia foto che testo"""
         user_id = query.from_user.id
         
         try:
             ticker_info = get_ticker_info(symbol)
             
             if not ticker_info:
-                await query.edit_message_text(f"❌ {symbol} not found")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    f"❌ {symbol} not found"
+                )
                 return
             
             # Prepare data
@@ -1025,18 +1181,32 @@ Click buttons below for detailed analysis:
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+            await self._update_or_resend_message(
+                query,
+                context,
+                message,
+                reply_markup,
+                'Markdown'
+            )
         
         except Exception as e:
             logger.error(f"Callback analysis error: {e}")
-            await query.edit_message_text(f"❌ Error analyzing {symbol}")
+            await self._update_or_resend_message(
+                query,
+                context,
+                f"❌ Error analyzing {symbol}"
+            )
     
     async def deep_analysis(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
         """Perform deep analysis with all periods"""
         try:
             await query.answer()
             
-            await query.edit_message_text(f"🔍 Performing deep analysis for {symbol}...")
+            await self._update_or_resend_message(
+                query,
+                context,
+                f"🔍 Performing deep analysis for {symbol}..."
+            )
             
             user_id = query.from_user.id
             periods = self.user_data.get(user_id, {}).get('periods', [1, 3, 6])
@@ -1051,7 +1221,11 @@ Click buttons below for detailed analysis:
                     all_data[period] = df
             
             if not all_data:
-                await query.edit_message_text(f"❌ No data available for {symbol}")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    f"❌ No data available for {symbol}"
+                )
                 return
             
             # Create detailed message
@@ -1084,15 +1258,21 @@ Click buttons below for detailed analysis:
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(
+            await self._update_or_resend_message(
+                query,
+                context,
                 message,
-                parse_mode='Markdown',
-                reply_markup=reply_markup
+                reply_markup,
+                'Markdown'
             )
             
         except Exception as e:
             logger.error(f"Deep analysis error: {e}")
-            await query.edit_message_text(f"❌ Error in deep analysis for {symbol}")
+            await self._update_or_resend_message(
+                query,
+                context,
+                f"❌ Error in deep analysis for {symbol}"
+            )
     
     async def callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle callback queries from inline keyboards"""
@@ -1127,13 +1307,26 @@ Click buttons below for detailed analysis:
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
-                await query.edit_message_text(welcome_message, reply_markup=reply_markup)
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    welcome_message,
+                    reply_markup
+                )
             
             elif data == "search_btn":
-                await query.edit_message_text("Please enter a search query:")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    "Please enter a search query:"
+                )
             
             elif data == "quick_btn":
-                await query.edit_message_text("Please enter a symbol for quick analysis:")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    "Please enter a symbol for quick analysis:"
+                )
             
             elif data == "help_btn":
                 await self.help_command(update, context)
@@ -1183,36 +1376,48 @@ Click buttons below for detailed analysis:
                 await self.settings_menu(update, context)
             
             elif data == "set_periods":
-                await query.edit_message_text(
+                await self._update_or_resend_message(
+                    query,
+                    context,
                     "📅 **Set Analysis Periods:**\n\n"
                     "Use command: /periods <months>\n"
                     "Example: `/periods 1,3,6`\n"
                     "Example: `/periods 1,3,6,12`\n\n"
-                    "Maximum period: 60 months (5 years)"
+                    "Maximum period: 60 months (5 years)",
+                    parse_mode='Markdown'
                 )
             
             elif data == "set_interval":
-                await query.edit_message_text(
+                await self._update_or_resend_message(
+                    query,
+                    context,
                     "📊 **Set Data Interval:**\n\n"
                     "Use command: /interval <value>\n"
                     "Available intervals:\n"
                     "• 1d (daily)\n"
                     "• 1wk (weekly)\n"
                     "• 1mo (monthly)\n\n"
-                    "Example: `/interval 1d`"
+                    "Example: `/interval 1d`",
+                    parse_mode='Markdown'
                 )
             
             elif data == "reset_settings":
                 user_id = query.from_user.id
                 self.user_data[user_id] = {'periods': [1, 3, 6], 'interval': '1d'}
-                await query.edit_message_text(
+                await self._update_or_resend_message(
+                    query,
+                    context,
                     "✅ Settings reset to default:\n"
                     "• Periods: 1, 3, 6 months\n"
                     "• Interval: 1d (daily)"
                 )
             
             elif data == "back_main":
-                await query.edit_message_text("🔙 Back to main menu")
+                await self._update_or_resend_message(
+                    query,
+                    context,
+                    "🔙 Back to main menu"
+                )
             
             else:
                 await query.answer("⚠️ Unknown command", show_alert=True)

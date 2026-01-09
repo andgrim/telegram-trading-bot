@@ -68,10 +68,16 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         if len(df) >= 20:
             df['SMA_20'] = df['Close'].rolling(window=20, min_periods=min_periods).mean()
             logger.info("✅ SMA_20 calculated")
+        else:
+            df['SMA_20'] = float('nan')
+            logger.warning("⚠️ Insufficient data for SMA_20")
         
         if len(df) >= 50:
             df['SMA_50'] = df['Close'].rolling(window=50, min_periods=min(50, len(df))).mean()
             logger.info("✅ SMA_50 calculated")
+        else:
+            df['SMA_50'] = float('nan')
+            logger.warning("⚠️ Insufficient data for SMA_50")
         
         # EMA for MACD - need at least 26 periods
         if len(df) >= 26:
@@ -83,6 +89,12 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
             df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False, min_periods=1).mean()
             df['MACD_Histogram'] = df['MACD'] - df['Signal_Line']
             logger.info("✅ MACD indicators calculated")
+        else:
+            # Initialize MACD columns with NaN if insufficient data
+            df['MACD'] = float('nan')
+            df['Signal_Line'] = float('nan')
+            df['MACD_Histogram'] = float('nan')
+            logger.warning(f"⚠️ Insufficient data for MACD: {len(df)} rows < 26 required")
         
         # RSI - need at least 14 periods
         if len(df) >= 14:
@@ -92,10 +104,13 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
             rs = gain / loss
             df['RSI'] = 100 - (100 / (1 + rs))
             logger.info("✅ RSI calculated")
+        else:
+            df['RSI'] = 50.0  # Default neutral value
+            logger.warning(f"⚠️ Insufficient data for RSI: {len(df)} rows < 14 required")
         
-        # Fill NaN values with forward/backward fill
-        df.fillna(method='ffill', inplace=True)
-        df.fillna(method='bfill', inplace=True)
+        # Fill NaN values with forward/backward fill (NEW METHOD)
+        df = df.ffill()
+        df = df.bfill()
         
         logger.info(f"✅ Indicators calculation complete. Columns: {df.columns.tolist()}")
         
