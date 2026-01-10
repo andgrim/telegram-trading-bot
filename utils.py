@@ -51,7 +51,7 @@ def get_stock_data(symbol: str, period_months: int = 3, interval: str = "1d") ->
         return pd.DataFrame()
 
 def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Calculate technical indicators with improved calculations"""
+    """Calculate technical indicators with extended calculation window"""
     if df.empty or len(df) < 5:
         logger.warning(f"DataFrame too small for indicators: {len(df)} rows")
         return df
@@ -61,56 +61,36 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     logger.info(f"Calculating indicators for {len(df)} rows")
     
     try:
-        # Ensure we have enough data
-        min_periods = min(20, len(df))
-        
-        # Moving Averages
+        # Calculate indicators with proper window sizes
+        # Simple Moving Averages
         if len(df) >= 20:
-            df['SMA_20'] = df['Close'].rolling(window=20, min_periods=min_periods).mean()
-            logger.info("✅ SMA_20 calculated")
+            df['SMA_20'] = df['Close'].rolling(window=20, min_periods=1).mean()
         else:
-            df['SMA_20'] = float('nan')
-            logger.warning("⚠️ Insufficient data for SMA_20")
-        
-        if len(df) >= 50:
-            df['SMA_50'] = df['Close'].rolling(window=50, min_periods=min(50, len(df))).mean()
-            logger.info("✅ SMA_50 calculated")
-        else:
-            df['SMA_50'] = float('nan')
-            logger.warning("⚠️ Insufficient data for SMA_50")
-        
-        # EMA for MACD - need at least 26 periods
-        if len(df) >= 26:
-            df['EMA_12'] = df['Close'].ewm(span=12, adjust=False, min_periods=1).mean()
-            df['EMA_26'] = df['Close'].ewm(span=26, adjust=False, min_periods=1).mean()
+            df['SMA_20'] = df['Close']
             
-            # MACD
-            df['MACD'] = df['EMA_12'] - df['EMA_26']
-            df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False, min_periods=1).mean()
-            df['MACD_Histogram'] = df['MACD'] - df['Signal_Line']
-            logger.info("✅ MACD indicators calculated")
+        if len(df) >= 50:
+            df['SMA_50'] = df['Close'].rolling(window=50, min_periods=1).mean()
         else:
-            # Initialize MACD columns with NaN if insufficient data
-            df['MACD'] = float('nan')
-            df['Signal_Line'] = float('nan')
-            df['MACD_Histogram'] = float('nan')
-            logger.warning(f"⚠️ Insufficient data for MACD: {len(df)} rows < 26 required")
+            df['SMA_50'] = df['Close']
         
-        # RSI - need at least 14 periods
-        if len(df) >= 14:
-            delta = df['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
-            rs = gain / loss
-            df['RSI'] = 100 - (100 / (1 + rs))
-            logger.info("✅ RSI calculated")
-        else:
-            df['RSI'] = 50.0  # Default neutral value
-            logger.warning(f"⚠️ Insufficient data for RSI: {len(df)} rows < 14 required")
+        # EMA for MACD
+        df['EMA_12'] = df['Close'].ewm(span=12, adjust=False, min_periods=1).mean()
+        df['EMA_26'] = df['Close'].ewm(span=26, adjust=False, min_periods=1).mean()
         
-        # Fill NaN values with forward/backward fill (NEW METHOD)
-        df = df.ffill()
-        df = df.bfill()
+        # MACD
+        df['MACD'] = df['EMA_12'] - df['EMA_26']
+        df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False, min_periods=1).mean()
+        df['MACD_Histogram'] = df['MACD'] - df['Signal_Line']
+        
+        # RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # Fill NaN values
+        df = df.fillna(method='ffill').fillna(method='bfill')
         
         logger.info(f"✅ Indicators calculation complete. Columns: {df.columns.tolist()}")
         

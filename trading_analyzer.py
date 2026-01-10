@@ -4,6 +4,8 @@ import matplotlib.dates as mdates
 from matplotlib.gridspec import GridSpec
 from utils import get_stock_data, calculate_technical_indicators
 import logging
+import yfinance as yf
+from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,26 +20,46 @@ class TradingAnalyzer:
         logger.info(f"Initialized analyzer for {self.symbol}")
     
     def analyze_period(self, period_months: int = 3):
-        """Analyze for a specific period"""
+        """Analyze for a specific period with extended data for proper indicator calculation"""
         try:
             logger.info(f"Analyzing {self.symbol} for {period_months} months")
             
-            # Get data for the SPECIFIC period
-            df = get_stock_data(self.symbol, period_months)
+            # FIX: Add extra days before the target period to calculate indicators correctly
+            # For SMA 50 we need 50 days BEFORE the period starts
+            extra_days = 60  # Extra days for indicator calculation
+            
+            # Convert months to days
+            target_days = period_months * 30
+            
+            # Download data for period + extra days
+            total_days = target_days + extra_days
+            
+            logger.info(f"📊 Getting {total_days} days of data (target: {target_days} + extra: {extra_days})")
+            
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=total_days)
+            
+            ticker = yf.Ticker(self.symbol)
+            df = ticker.history(start=start_date, end=end_date, interval="1d")
             
             if df is None or df.empty:
                 logger.error(f"No data returned for {self.symbol}, period {period_months} months")
                 return None
             
-            logger.info(f"Data shape: {df.shape}, columns: {df.columns.tolist()}")
+            logger.info(f"✅ Got {len(df)} days of data")
             
-            # Calculate indicators
+            # Calculate indicators on ALL data
             df = calculate_technical_indicators(df)
             
+            # Then take only the target period (remove extra days from beginning)
+            if len(df) > target_days:
+                df = df.tail(target_days)
+            
+            logger.info(f"📊 Final data shape: {df.shape}")
             return df
             
         except Exception as e:
-            logger.error(f"Error analyzing {self.symbol}: {e}")
+            logger.error(f"Error analyzing {self.symbol}: {e}", exc_info=True)
             return None
     
     def _check_indicators_exist(self, df: pd.DataFrame) -> dict:

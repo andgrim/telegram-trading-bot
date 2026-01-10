@@ -29,13 +29,13 @@ class TelegramTradingBot:
     
     async def _update_or_resend_message(self, query, context, text, reply_markup=None, parse_mode='Markdown'):
         """
-        Funzione helper per gestire l'aggiornamento dei messaggi, sia foto che testo.
-        Se il messaggio corrente è una foto, invia un nuovo messaggio.
-        Se è testo, modifica il messaggio esistente.
+        Helper function to handle message updates, both photos and text.
+        If current message is a photo, send a new message.
+        If it's text, edit the existing message.
         """
         try:
             if query.message.photo:
-                # Se è una foto, invia un NUOVO messaggio di testo
+                # If it's a photo, send a NEW text message
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=text,
@@ -43,7 +43,7 @@ class TelegramTradingBot:
                     parse_mode=parse_mode
                 )
             else:
-                # Se è già testo, modifica normalmente
+                # If it's already text, edit normally
                 await query.edit_message_text(
                     text=text,
                     reply_markup=reply_markup,
@@ -52,7 +52,7 @@ class TelegramTradingBot:
             return True
         except Exception as e:
             logger.error(f"Error in _update_or_resend_message: {e}")
-            # Fallback: invia sempre un nuovo messaggio
+            # Fallback: always send a new message
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
                 text=text,
@@ -307,13 +307,23 @@ class TelegramTradingBot:
                 df = analyzer.analyze_period(period)
                 
                 if df is not None and not df.empty:
-                    # Calculate performance for THIS specific period
+                    # FIX: Calculate specific values for THIS period
                     start_idx = 0
                     end_idx = -1
                     
-                    # CORRECT: Calculate price change from start to end of THIS period
-                    price_change = ((df['Close'].iloc[end_idx] / df['Close'].iloc[start_idx]) - 1) * 100
-                    current_rsi = df['RSI'].iloc[end_idx] if 'RSI' in df.columns else 50
+                    # Calculate price change from start to end of THIS specific period
+                    start_price = df['Close'].iloc[0]
+                    end_price = df['Close'].iloc[-1]
+                    price_change = ((end_price / start_price) - 1) * 100
+                    
+                    # FIX: Use average RSI of last 5 days instead of single last value
+                    if 'RSI' in df.columns:
+                        # Calculate average RSI for the last 5 days
+                        rsi_window = min(5, len(df))
+                        avg_rsi = df['RSI'].tail(rsi_window).mean()
+                    else:
+                        avg_rsi = 50
+                    
                     # Safe MACD signal check
                     if 'MACD' in df.columns and 'Signal_Line' in df.columns:
                         macd_val = df['MACD'].iloc[end_idx]
@@ -324,27 +334,29 @@ class TelegramTradingBot:
                             macd_signal = "N/A"
                     else:
                         macd_signal = "N/A"
+                    
                     volume_trend = analyzer._analyze_volume_trend(df)
                     
                     summary_data.append({
                         'period': period,
-                        'price': df['Close'].iloc[end_idx],
+                        'start_price': start_price,  # Starting price of the period
+                        'end_price': end_price,      # Current price (end of period)
                         'change': price_change,
-                        'rsi': current_rsi,
+                        'rsi': avg_rsi,              # Average RSI, not just last value
                         'macd': macd_signal,
-                        'volume': volume_trend,
-                        'start_price': df['Close'].iloc[start_idx]
+                        'volume': volume_trend
                     })
             
             if summary_data:
                 # Create summary table with CORRECT data
                 summary_text = "\n📊 **TECHNICAL ANALYSIS SUMMARY:**\n\n"
-                summary_text += "Period | Price | Change | RSI | MACD | Volume\n"
-                summary_text += "--------|--------|--------|-----|------|--------\n"
+                summary_text += "Period | Start | Current | Change | Avg RSI | MACD | Volume\n"
+                summary_text += "--------|--------|---------|--------|---------|------|--------\n"
                 
                 for data in summary_data:
                     change_emoji = "📈" if data['change'] > 0 else "📉"
-                    summary_text += (f"{data['period']}M | ${data['price']:.2f} | "
+                    summary_text += (f"{data['period']}M | ${data['start_price']:.2f} | "
+                                   f"${data['end_price']:.2f} | "
                                    f"{change_emoji}{data['change']:+.1f}% | "
                                    f"{data['rsi']:.1f} | {data['macd']} | "
                                    f"{data['volume']}\n")
@@ -401,7 +413,7 @@ class TelegramTradingBot:
             
             analyzer = TradingAnalyzer(symbol)
             
-            # Get data
+            # Get data (now includes extended data for proper indicator calculation)
             logger.info(f"📥 Getting data for {symbol}, {period} months")
             df = analyzer.analyze_period(period)
             
@@ -538,7 +550,7 @@ class TelegramTradingBot:
             )
     
     async def show_menu(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        """Show menu for a specific symbol - gestisce sia foto che testo"""
+        """Show menu for a specific symbol - handles both photos and text"""
         try:
             await query.answer()
             
@@ -578,7 +590,7 @@ class TelegramTradingBot:
             
         except Exception as e:
             logger.error(f"Menu error: {e}")
-            # Fallback: invia sempre nuovo messaggio
+            # Fallback: always send new message
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
                 text=f"📊 **{symbol} - Analysis Menu**\n\nChoose an option:",
@@ -668,7 +680,6 @@ class TelegramTradingBot:
             # Create and send comparison chart
             fig = analyzer1.create_comparison_chart(df1, symbol1, df2, symbol2, "6")
             
-            # Save to bytes
             buf = BytesIO()
             fig.savefig(buf, format='png', dpi=120, facecolor='black')
             buf.seek(0)
@@ -1120,7 +1131,7 @@ Available: 1d, 1wk, 1mo
             await context.bot.send_message(chat_id, f"❌ Quick analysis error for {symbol}")
     
     async def analyze_ticker_from_callback(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        """Analyze ticker from callback - gestisce sia foto che testo"""
+        """Analyze ticker from callback - handles both photos and text"""
         user_id = query.from_user.id
         
         try:
@@ -1235,7 +1246,9 @@ Click buttons below for detailed analysis:
                 start_price = df['Close'].iloc[0]
                 end_price = df['Close'].iloc[-1]
                 price_change = ((end_price / start_price) - 1) * 100
-                current_rsi = df['RSI'].iloc[-1] if 'RSI' in df.columns else 0
+                # Use average RSI for the period
+                rsi_window = min(5, len(df))
+                avg_rsi = df['RSI'].tail(rsi_window).mean() if 'RSI' in df.columns else 50
                 macd_signal = "↑" if df['MACD'].iloc[-1] > df['Signal_Line'].iloc[-1] else "↓" if 'MACD' in df.columns else "N/A"
                 volume_trend = analyzer._analyze_volume_trend(df)
                 
@@ -1243,7 +1256,7 @@ Click buttons below for detailed analysis:
                 message += f"  • Start: ${start_price:.2f}\n"
                 message += f"  • Current: ${end_price:.2f}\n"
                 message += f"  • Change: {price_change:+.2f}%\n"
-                message += f"  • RSI: {current_rsi:.1f}\n"
+                message += f"  • Avg RSI: {avg_rsi:.1f}\n"
                 message += f"  • MACD: {macd_signal}\n"
                 message += f"  • Volume: {volume_trend}\n\n"
             

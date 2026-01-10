@@ -25,7 +25,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             }
             
             self.wfile.write(json.dumps(response_data).encode('utf-8'))
-            logger.info(f"✅ Health check da {self.client_address[0]}")
+            logger.info(f"✅ Health check from {self.client_address[0]}")
         else:
             self.send_response(404)
             self.end_headers()
@@ -34,18 +34,18 @@ class HealthHandler(BaseHTTPRequestHandler):
         pass
 
 def start_health_server():
-    """Avvia il server health in un thread separato"""
+    """Start the health server in a separate thread"""
     port = int(os.environ.get('PORT', 8080))
     
     def run_server():
         try:
             with socketserver.TCPServer(('0.0.0.0', port), HealthHandler) as httpd:
                 httpd.start_time = time.time()
-                logger.info(f"✅ Health server avviato sulla porta {port}")
+                logger.info(f"✅ Health server started on port {port}")
                 logger.info(f"🔗 Endpoint: http://0.0.0.0:{port}/health")
                 httpd.serve_forever()
         except Exception as e:
-            logger.error(f"❌ Errore health server: {e}")
+            logger.error(f"❌ Health server error: {e}")
     
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
