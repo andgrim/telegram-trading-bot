@@ -24,17 +24,12 @@ class TradingAnalyzer:
         try:
             logger.info(f"Analyzing {self.symbol} for {period_months} months")
             
-            # FIX: Add extra days before the target period to calculate indicators correctly
-            # For SMA 50 we need 50 days BEFORE the period starts
-            extra_days = 60  # Extra days for indicator calculation
+            extra_days = 60
             
-            # Convert months to days
             target_days = period_months * 30
-            
-            # Download data for period + extra days
             total_days = target_days + extra_days
             
-            logger.info(f"📊 Getting {total_days} days of data (target: {target_days} + extra: {extra_days})")
+            logger.info(f"Getting {total_days} days of data (target: {target_days} + extra: {extra_days})")
             
             end_date = datetime.now()
             start_date = end_date - timedelta(days=total_days)
@@ -46,16 +41,14 @@ class TradingAnalyzer:
                 logger.error(f"No data returned for {self.symbol}, period {period_months} months")
                 return None
             
-            logger.info(f"✅ Got {len(df)} days of data")
+            logger.info(f"Got {len(df)} days of data")
             
-            # Calculate indicators on ALL data
             df = calculate_technical_indicators(df)
             
-            # Then take only the target period (remove extra days from beginning)
             if len(df) > target_days:
                 df = df.tail(target_days)
             
-            logger.info(f"📊 Final data shape: {df.shape}")
+            logger.info(f"Final data shape: {df.shape}")
             return df
             
         except Exception as e:
@@ -108,31 +101,30 @@ class TradingAnalyzer:
             return "N/A"
         
         try:
-            # Check for NaN values
             if pd.isna(df['MACD'].iloc[-1]) or pd.isna(df['Signal_Line'].iloc[-1]):
                 return "N/A"
                 
             if df['MACD'].iloc[-1] > df['Signal_Line'].iloc[-1]:
-                return "↑"  # BULLISH
+                return "↑"
             elif df['MACD'].iloc[-1] < df['Signal_Line'].iloc[-1]:
-                return "↓"  # BEARISH
-            return "→"  # NEUTRAL
+                return "↓"
+            return "→"
         except Exception as e:
             logger.warning(f"MACD signal error: {e}")
             return "N/A"
     
     def create_technical_chart(self, df: pd.DataFrame, period: str):
-        """Create professional technical chart in black style with thin lines"""
+        """Create professional technical chart in black style with TURCHESE FLUO price line"""
         logger.info(f"Creating chart for {self.symbol}, period {period} months")
         
         try:
-            # COLORS - Thin lines
-            AQUA_MARINE = '#00FF9D'  # Aqua marine for price line
-            LIGHT_ORANGE = '#FF8C42'  # SMA 20
-            LIGHT_BLUE = '#4CC9F0'    # SMA 50
-            PURPLE = '#9D4EDD'       # RSI
-            RED = '#FF0033'          # Negative MACD
-            WHITE = '#FFFFFF'        # Text
+            # COLORS - MODIFIED: Turchese fluo per la linea dei prezzi (#00FFFF)
+            TURCHESE_FLUO = '#00FFFF'    # TURCHESE FLUO per linea prezzi (MODIFICATO)
+            LIGHT_ORANGE = '#FF8C42'     # SMA 20
+            LIGHT_BLUE = '#4CC9F0'       # SMA 50
+            PURPLE = '#9D4EDD'           # RSI
+            RED = '#FF0033'              # Negative MACD
+            WHITE = '#FFFFFF'            # Text
             
             # Figure with black background
             fig = plt.figure(figsize=(14, 10), facecolor='black')
@@ -141,15 +133,15 @@ class TradingAnalyzer:
             # GridSpec with 4 rows
             gs = GridSpec(4, 1, figure=fig, height_ratios=[3, 1, 1, 1], hspace=0.12)
             
-            # ========== 1. PRICE CHART (THIN LINE) ==========
+            # ========== 1. PRICE CHART (TURCHESE FLUO LINE) ==========
             ax_price = fig.add_subplot(gs[0])
             ax_price.set_facecolor('black')
             
-            # Plot price with AQUA MARINE thin line
-            ax_price.plot(df.index, df['Close'], color=AQUA_MARINE, linewidth=1.5, 
+            # Plot price with TURCHESE FLUO line
+            ax_price.plot(df.index, df['Close'], color=TURCHESE_FLUO, linewidth=1.5, 
                          label='Price', alpha=0.95, zorder=5)
             
-            # Moving averages with thin lines
+            # Moving averages
             if 'SMA_20' in df.columns and not pd.isna(df['SMA_20']).all():
                 ax_price.plot(df.index, df['SMA_20'], color=LIGHT_ORANGE, linewidth=1.0,
                              label='SMA 20', alpha=0.7, zorder=4, linestyle='--')
@@ -162,7 +154,7 @@ class TradingAnalyzer:
             if 'SMA_20' in df.columns and not pd.isna(df['SMA_20']).all():
                 above_sma20 = df['Close'] > df['SMA_20']
                 ax_price.fill_between(df.index, df['SMA_20'], df['Close'],
-                                     where=above_sma20, color=AQUA_MARINE, alpha=0.1,
+                                     where=above_sma20, color=TURCHESE_FLUO, alpha=0.1,
                                      label='Above SMA20', zorder=2)
             
             # Title
@@ -188,11 +180,10 @@ class TradingAnalyzer:
             ax_price.legend(loc='upper left', facecolor='#111111', edgecolor=WHITE,
                            labelcolor=WHITE, fontsize=8, framealpha=0.9)
             
-            # ========== 2. MACD CHART (THIN LINE) ==========
+            # ========== 2. MACD CHART ==========
             ax_macd = fig.add_subplot(gs[1], sharex=ax_price)
             ax_macd.set_facecolor('black')
             
-            # Check if MACD columns exist and have valid data
             has_macd_data = (
                 'MACD' in df.columns and 
                 'Signal_Line' in df.columns and 
@@ -201,31 +192,29 @@ class TradingAnalyzer:
             )
             
             if has_macd_data:
-                # MACD thin lines
-                ax_macd.plot(df.index, df['MACD'], color=AQUA_MARINE, linewidth=1.2,
+                # MACD lines - usando turchese anche per MACD per coerenza
+                ax_macd.plot(df.index, df['MACD'], color=TURCHESE_FLUO, linewidth=1.2,
                             label='MACD', alpha=0.8, zorder=3)
                 ax_macd.plot(df.index, df['Signal_Line'], color=RED, linewidth=1.2,
                             label='Signal', alpha=0.8, linestyle='--', zorder=2)
                 
-                # MACD thin histogram
+                # MACD histogram
                 if 'MACD_Histogram' in df.columns and not df['MACD_Histogram'].isna().all():
-                    # Replace NaN with 0 for histogram
                     hist_data = df['MACD_Histogram'].fillna(0)
-                    macd_colors = [AQUA_MARINE if val >= 0 else RED for val in hist_data]
+                    macd_colors = [TURCHESE_FLUO if val >= 0 else RED for val in hist_data]
                     ax_macd.bar(df.index, hist_data, color=macd_colors,
                                alpha=0.5, width=0.6, edgecolor='none', linewidth=0.5, zorder=1)
                 
-                # Zero thin line
+                # Zero line
                 ax_macd.axhline(y=0, color=WHITE, linestyle='-', linewidth=0.5, alpha=0.4)
                 
                 # Labels
                 ax_macd.set_ylabel('MACD Signal', color=WHITE, fontsize=10)
                 ax_macd.tick_params(colors=WHITE, labelsize=8)
                 ax_macd.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3)
-                ax_macd.legend(loc='upper left', facecolor='#111111', edgecolor=AQUA_MARINE,
+                ax_macd.legend(loc='upper left', facecolor='#111111', edgecolor=TURCHESE_FLUO,
                               labelcolor=WHITE, fontsize=7, framealpha=0.9)
             else:
-                # Display message instead of chart
                 ax_macd.text(0.5, 0.5, 'MACD Data Not Available\n(Insufficient data: need ≥26 days)',
                             horizontalalignment='center', verticalalignment='center',
                             transform=ax_macd.transAxes, color=WHITE, fontsize=9)
@@ -234,35 +223,33 @@ class TradingAnalyzer:
                 ax_macd.tick_params(colors=WHITE, labelsize=8)
                 ax_macd.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3)
             
-            # ========== 3. RSI CHART (THIN LINE) ==========
+            # ========== 3. RSI CHART ==========
             ax_rsi = fig.add_subplot(gs[2], sharex=ax_price)
             ax_rsi.set_facecolor('black')
             
-            # RSI thin line
             if 'RSI' in df.columns and not df['RSI'].isna().all():
                 ax_rsi.plot(df.index, df['RSI'], color=PURPLE, linewidth=1.2, alpha=0.8)
                 
-                # RSI current value
                 last_rsi = df['RSI'].iloc[-1]
                 if not pd.isna(last_rsi):
                     ax_rsi.text(0.98, 0.95, f'RSI: {last_rsi:.1f}', transform=ax_rsi.transAxes,
                                color=WHITE, fontsize=8, fontweight='bold', ha='right',
                                bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.8))
                 
-                # RSI thin levels
+                # RSI levels
                 ax_rsi.axhline(y=70, color=RED, linestyle='--', linewidth=0.8, alpha=0.6)
-                ax_rsi.axhline(y=30, color=AQUA_MARINE, linestyle='--', linewidth=0.8, alpha=0.6)
+                ax_rsi.axhline(y=30, color=TURCHESE_FLUO, linestyle='--', linewidth=0.8, alpha=0.6)
                 
-                # Zone colorate (transparent)
+                # Zone coloring
                 ax_rsi.fill_between(df.index, 30, 70, color='gray', alpha=0.05)
                 ax_rsi.fill_between(df.index, 70, 100, color=RED, alpha=0.05)
-                ax_rsi.fill_between(df.index, 0, 30, color=AQUA_MARINE, alpha=0.05)
+                ax_rsi.fill_between(df.index, 0, 30, color=TURCHESE_FLUO, alpha=0.05)
                 
                 # Labels
                 ax_rsi.text(0.02, 1.02, 'Overbought (70)', transform=ax_rsi.transAxes,
                            color=RED, fontsize=7, verticalalignment='bottom')
                 ax_rsi.text(0.02, -0.02, 'Oversold (30)', transform=ax_rsi.transAxes,
-                           color=AQUA_MARINE, fontsize=7, verticalalignment='top')
+                           color=TURCHESE_FLUO, fontsize=7, verticalalignment='top')
             else:
                 ax_rsi.text(0.5, 0.5, 'RSI Data Not Available\n(Insufficient data: need ≥14 days)',
                             horizontalalignment='center', verticalalignment='center',
@@ -273,18 +260,17 @@ class TradingAnalyzer:
             ax_rsi.tick_params(colors=WHITE, labelsize=8)
             ax_rsi.grid(True, alpha=0.1, color='gray', linestyle=':', linewidth=0.3)
             
-            # ========== 4. VOLUME CHART (THIN BARS) ==========
+            # ========== 4. VOLUME CHART ==========
             ax_volume = fig.add_subplot(gs[3], sharex=ax_price)
             ax_volume.set_facecolor('black')
             
-            # Volume bars colorate con linee sottili
-            volume_colors = []
             if 'Volume' in df.columns:
+                volume_colors = []
                 for i in range(len(df)):
                     if i == 0:
-                        volume_colors.append(AQUA_MARINE)
+                        volume_colors.append(TURCHESE_FLUO)
                     else:
-                        volume_colors.append(AQUA_MARINE if df['Close'].iloc[i] >= df['Close'].iloc[i-1] else RED)
+                        volume_colors.append(TURCHESE_FLUO if df['Close'].iloc[i] >= df['Close'].iloc[i-1] else RED)
                 
                 ax_volume.bar(df.index, df['Volume'], color=volume_colors,
                              alpha=0.6, width=0.6, edgecolor='none', linewidth=0.3)
@@ -298,7 +284,6 @@ class TradingAnalyzer:
             date_format = mdates.DateFormatter('%Y-%m')
             ax_volume.xaxis.set_major_formatter(date_format)
             
-            # Show only some dates for readability
             if len(df) > 120:
                 ax_volume.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
             else:
@@ -320,7 +305,6 @@ class TradingAnalyzer:
             
         except Exception as e:
             logger.error(f"Error creating chart: {e}")
-            # Create a simple fallback chart
             return self._create_fallback_chart(df, period)
     
     def _create_fallback_chart(self, df: pd.DataFrame, period: str):
@@ -330,8 +314,8 @@ class TradingAnalyzer:
             fig, ax = plt.subplots(figsize=(10, 6), facecolor='black')
             ax.set_facecolor('black')
             
-            # Plot just the price
-            ax.plot(df.index, df['Close'], color='#00FF9D', linewidth=2)
+            # Plot just the price with turchese fluo
+            ax.plot(df.index, df['Close'], color='#00FFFF', linewidth=2)
             ax.set_title(f'{self.symbol} - {period} months (Simple Chart)', color='white')
             ax.set_ylabel('Price ($)', color='white')
             ax.tick_params(colors='white')
@@ -342,7 +326,6 @@ class TradingAnalyzer:
             return fig
         except Exception as e:
             logger.error(f"Even fallback chart failed: {e}")
-            # Create minimal error chart
             fig = plt.figure(figsize=(8, 4), facecolor='black')
             ax = fig.add_subplot(111)
             ax.set_facecolor('black')
@@ -357,7 +340,7 @@ class TradingAnalyzer:
         """Create comparison chart between two symbols"""
         logger.info(f"Creating comparison chart: {symbol1} vs {symbol2}")
         
-        AQUA_MARINE = '#00FF9D'
+        TURCHESE_FLUO = '#00FFFF'    # TURCHESE FLUO (MODIFICATO)
         LIGHT_BLUE = '#4CC9F0'
         LIGHT_ORANGE = '#FF8C42'
         
@@ -369,8 +352,8 @@ class TradingAnalyzer:
         norm_price1 = (df1['Close'] / df1['Close'].iloc[0]) * 100
         norm_price2 = (df2['Close'] / df2['Close'].iloc[0]) * 100
         
-        # Plot normalized prices with thin lines
-        ax1.plot(df1.index, norm_price1, color=AQUA_MARINE, linewidth=1.5, 
+        # Plot normalized prices
+        ax1.plot(df1.index, norm_price1, color=TURCHESE_FLUO, linewidth=1.5, 
                 label=f'{symbol1}', alpha=0.9)
         ax1.plot(df2.index, norm_price2, color=LIGHT_BLUE, linewidth=1.5, 
                 label=f'{symbol2}', alpha=0.9)
@@ -394,15 +377,15 @@ class TradingAnalyzer:
             ratio_series = (df1['Close'].iloc[:min_len].values / 
                           df2['Close'].iloc[:min_len].values)
         
-        # Ratio thin line
+        # Ratio line
         ax2.plot(df1.index[:len(ratio_series)], ratio_series, 
                 color=LIGHT_ORANGE, linewidth=1.5)
         ax2.axhline(y=1.0, color='white', linestyle='--', linewidth=0.8, alpha=0.5)
         
-        # Fill between ratio and 1 (transparent)
+        # Fill between ratio and 1
         ax2.fill_between(df1.index[:len(ratio_series)], ratio_series, 1, 
                         where=ratio_series >= 1,
-                        facecolor=AQUA_MARINE, alpha=0.1)
+                        facecolor=TURCHESE_FLUO, alpha=0.1)
         ax2.fill_between(df1.index[:len(ratio_series)], ratio_series, 1,
                         where=ratio_series < 1,
                         facecolor='red', alpha=0.1)
@@ -430,7 +413,7 @@ class TradingAnalyzer:
         
         fig.text(0.02, 0.02, summary_text, color='white', fontsize=10,
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='black', 
-                         edgecolor=AQUA_MARINE))
+                         edgecolor=TURCHESE_FLUO))
         
         plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.1, hspace=0.1)
         
@@ -441,7 +424,7 @@ class TradingAnalyzer:
         """Create simplified chart for quick analysis"""
         logger.info("Creating quick chart")
         
-        AQUA_MARINE = '#00FF9D'  # Aqua marine
+        TURCHESE_FLUO = '#00FFFF'    # TURCHESE FLUO (MODIFICATO)
         LIGHT_ORANGE = '#FF8C42'
         LIGHT_BLUE = '#4CC9F0'
         WHITE = '#FFFFFF'
@@ -455,8 +438,8 @@ class TradingAnalyzer:
         ax1.set_facecolor('black')
         ax2.set_facecolor('black')
         
-        # Price chart - AQUA MARINE THIN LINE
-        ax1.plot(df.index, df['Close'], color=AQUA_MARINE, linewidth=1.5, label='Price')
+        # Price chart - TURCHESE FLUO LINE
+        ax1.plot(df.index, df['Close'], color=TURCHESE_FLUO, linewidth=1.5, label='Price')
         if 'SMA_20' in df.columns:
             ax1.plot(df.index, df['SMA_20'], color=LIGHT_ORANGE, linewidth=1.0, 
                     linestyle='--', label='SMA 20')
@@ -464,11 +447,11 @@ class TradingAnalyzer:
             ax1.plot(df.index, df['SMA_50'], color=LIGHT_BLUE, linewidth=1.0, 
                     linestyle='--', label='SMA 50')
         
-        # Highlight area above SMA20 (transparent)
+        # Highlight area above SMA20
         if 'SMA_20' in df.columns:
             above_sma20 = df['Close'] > df['SMA_20']
             ax1.fill_between(df.index, df['SMA_20'], df['Close'],
-                            where=above_sma20, color=AQUA_MARINE, alpha=0.1,
+                            where=above_sma20, color=TURCHESE_FLUO, alpha=0.1,
                             label='Above SMA20')
         
         ax1.set_title(f'{self.symbol} - Quick Analysis', color='white', fontsize=13)
@@ -476,14 +459,14 @@ class TradingAnalyzer:
         ax1.grid(True, alpha=0.15, color='gray', linewidth=0.3)
         ax1.tick_params(colors='white', labelsize=8)
         
-        # Volume thin bars
+        # Volume bars
         colors_volume = []
         if 'Volume' in df.columns:
             for i in range(len(df)):
                 if i == 0:
-                    colors_volume.append(AQUA_MARINE)
+                    colors_volume.append(TURCHESE_FLUO)
                 elif df['Close'].iloc[i] >= df['Close'].iloc[i-1]:
-                    colors_volume.append(AQUA_MARINE)
+                    colors_volume.append(TURCHESE_FLUO)
                 else:
                     colors_volume.append('#FF0000')
             

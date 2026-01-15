@@ -1,6 +1,6 @@
 import asyncio
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from trading_analyzer import TradingAnalyzer
 from utils import search_tickers, get_ticker_info
@@ -11,6 +11,8 @@ from io import BytesIO
 import logging
 import os
 from dotenv import load_dotenv
+import sys
+import signal
 
 # Load environment variables
 load_dotenv()
@@ -18,7 +20,8 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
 
@@ -26,16 +29,15 @@ class TelegramTradingBot:
     def __init__(self, token: str):
         self.token = token
         self.user_data = {}
+        self.application = None
+        self.is_running = False
     
     async def _update_or_resend_message(self, query, context, text, reply_markup=None, parse_mode='Markdown'):
         """
         Helper function to handle message updates, both photos and text.
-        If current message is a photo, send a new message.
-        If it's text, edit the existing message.
         """
         try:
             if query.message.photo:
-                # If it's a photo, send a NEW text message
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=text,
@@ -43,7 +45,6 @@ class TelegramTradingBot:
                     parse_mode=parse_mode
                 )
             else:
-                # If it's already text, edit normally
                 await query.edit_message_text(
                     text=text,
                     reply_markup=reply_markup,
@@ -52,7 +53,6 @@ class TelegramTradingBot:
             return True
         except Exception as e:
             logger.error(f"Error in _update_or_resend_message: {e}")
-            # Fallback: always send a new message
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
                 text=text,
@@ -195,7 +195,7 @@ class TelegramTradingBot:
             
             # Create inline keyboard with results
             keyboard = []
-            for result in results[:8]:  # Max 8 results
+            for result in results[:8]:
                 btn_text = f"{result['symbol']} - {result['name'][:30]}..."
                 callback_data = f"select_{result['symbol']}"
                 keyboard.append([InlineKeyboardButton(btn_text, callback_data=callback_data)])
@@ -307,7 +307,6 @@ class TelegramTradingBot:
                 df = analyzer.analyze_period(period)
                 
                 if df is not None and not df.empty:
-                    # FIX: Calculate specific values for THIS period
                     start_idx = 0
                     end_idx = -1
                     
@@ -316,7 +315,6 @@ class TelegramTradingBot:
                     end_price = df['Close'].iloc[-1]
                     price_change = ((end_price / start_price) - 1) * 100
                     
-                    # FIX: Use average RSI of last 5 days instead of single last value
                     if 'RSI' in df.columns:
                         # Calculate average RSI for the last 5 days
                         rsi_window = min(5, len(df))
@@ -339,10 +337,10 @@ class TelegramTradingBot:
                     
                     summary_data.append({
                         'period': period,
-                        'start_price': start_price,  # Starting price of the period
-                        'end_price': end_price,      # Current price (end of period)
+                        'start_price': start_price,
+                        'end_price': end_price,
                         'change': price_change,
-                        'rsi': avg_rsi,              # Average RSI, not just last value
+                        'rsi': avg_rsi,
                         'macd': macd_signal,
                         'volume': volume_trend
                     })
@@ -399,7 +397,7 @@ class TelegramTradingBot:
             await context.bot.send_message(chat_id, f"❌ Error analyzing {symbol}")
     
     async def show_chart(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str, period: int):
-        """Show ticker chart with back button - ENHANCED VERSION"""
+        """Show ticker chart with back button"""
         try:
             await query.answer()
             
@@ -409,17 +407,16 @@ class TelegramTradingBot:
                 f"📊 Creating chart for {symbol} ({period} months)..."
             )
             
-            logger.info(f"🚀 Starting chart creation for {symbol}, period {period} months")
+            logger.info(f"Creating chart for {symbol}, period {period} months")
             
             analyzer = TradingAnalyzer(symbol)
             
-            # Get data (now includes extended data for proper indicator calculation)
-            logger.info(f"📥 Getting data for {symbol}, {period} months")
+            # Get data
+            logger.info(f"Getting data for {symbol}, {period} months")
             df = analyzer.analyze_period(period)
             
-            # DEBUG: Log detailed info
             if df is None:
-                logger.error(f"❌ DataFrame is None for {symbol}")
+                logger.error(f"DataFrame is None for {symbol}")
                 await self._update_or_resend_message(
                     query,
                     context,
@@ -428,7 +425,7 @@ class TelegramTradingBot:
                 return
                 
             if df.empty:
-                logger.error(f"❌ DataFrame is empty for {symbol}")
+                logger.error(f"DataFrame is empty for {symbol}")
                 await self._update_or_resend_message(
                     query,
                     context,
@@ -436,13 +433,13 @@ class TelegramTradingBot:
                 )
                 return
                 
-            logger.info(f"✅ DataFrame loaded - Shape: {df.shape}, Columns: {df.columns.tolist()}")
+            logger.info(f"DataFrame loaded - Shape: {df.shape}")
             
             # Check if required columns exist
             required_cols = ['Close']
             missing_cols = [col for col in required_cols if col not in df.columns]
             if missing_cols:
-                logger.error(f"❌ Missing required columns: {missing_cols}")
+                logger.error(f"Missing required columns: {missing_cols}")
                 await self._update_or_resend_message(
                     query,
                     context,
@@ -451,16 +448,15 @@ class TelegramTradingBot:
                 return
             
             # Create matplotlib figure
-            logger.info("🎨 Creating technical chart...")
+            logger.info("Creating technical chart...")
             try:
                 fig = analyzer.create_technical_chart(df, str(period))
             except Exception as chart_error:
-                logger.error(f"❌ Error in create_technical_chart: {chart_error}")
-                # Try fallback
+                logger.error(f"Error in create_technical_chart: {chart_error}")
                 fig = analyzer._create_fallback_chart(df, str(period))
             
             if fig is None:
-                logger.error("❌ Figure is None!")
+                logger.error("Figure is None!")
                 await self._update_or_resend_message(
                     query,
                     context,
@@ -468,26 +464,24 @@ class TelegramTradingBot:
                 )
                 return
                 
-            logger.info(f"✅ Figure created successfully, size: {fig.get_size_inches()}")
+            logger.info(f"Figure created successfully")
             
             # Save to bytes
             try:
                 buf = BytesIO()
-                logger.info("💾 Saving figure to buffer...")
+                logger.info("Saving figure to buffer...")
                 
-                # Save with various options
                 try:
                     fig.savefig(buf, format='png', dpi=120, facecolor='black', bbox_inches='tight')
                 except:
-                    # Try without bbox_inches
                     fig.savefig(buf, format='png', dpi=100, facecolor='black')
                 
                 buf.seek(0)
                 buffer_size = len(buf.getvalue())
-                logger.info(f"✅ Buffer created, size: {buffer_size} bytes")
+                logger.info(f"Buffer created, size: {buffer_size} bytes")
                 
                 if buffer_size == 0:
-                    logger.error("❌ Buffer is empty!")
+                    logger.error("Buffer is empty!")
                     await self._update_or_resend_message(
                         query,
                         context,
@@ -496,7 +490,7 @@ class TelegramTradingBot:
                     return
                     
             except Exception as e:
-                logger.error(f"❌ Error saving figure to buffer: {e}")
+                logger.error(f"Error saving figure to buffer: {e}")
                 await self._update_or_resend_message(
                     query,
                     context,
@@ -513,7 +507,7 @@ class TelegramTradingBot:
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             # Send photo
-            logger.info("📤 Sending photo to Telegram...")
+            logger.info("Sending photo to Telegram...")
             try:
                 await context.bot.send_photo(
                     chat_id=query.message.chat_id,
@@ -521,11 +515,10 @@ class TelegramTradingBot:
                     caption=f"📈 {symbol} Chart - {period} months\nPrice, Volume, Moving Averages, MACD, RSI",
                     reply_markup=reply_markup
                 )
-                logger.info(f"✅ Chart sent successfully for {symbol}")
+                logger.info(f"Chart sent successfully for {symbol}")
                 
             except Exception as send_error:
-                logger.error(f"❌ Error sending photo: {send_error}")
-                # Try sending as document
+                logger.error(f"Error sending photo: {send_error}")
                 buf.seek(0)
                 await context.bot.send_document(
                     chat_id=query.message.chat_id,
@@ -534,15 +527,14 @@ class TelegramTradingBot:
                     caption=f"📈 {symbol} Chart - {period} months",
                     reply_markup=reply_markup
                 )
-                logger.info(f"✅ Chart sent as document for {symbol}")
+                logger.info(f"Chart sent as document for {symbol}")
             
-            # Close the figure to free memory
             plt.close(fig)
-            logger.info(f"✅ Chart process completed for {symbol}")
+            logger.info(f"Chart process completed for {symbol}")
             
         except Exception as e:
-            logger.error(f"❌ Error in show_chart: {e}", exc_info=True)
-            error_msg = str(e)[:100]  # Limit error message length
+            logger.error(f"Error in show_chart: {e}", exc_info=True)
+            error_msg = str(e)[:100]
             await self._update_or_resend_message(
                 query,
                 context,
@@ -550,7 +542,7 @@ class TelegramTradingBot:
             )
     
     async def show_menu(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        """Show menu for a specific symbol - handles both photos and text"""
+        """Show menu for a specific symbol"""
         try:
             await query.answer()
             
@@ -590,7 +582,6 @@ class TelegramTradingBot:
             
         except Exception as e:
             logger.error(f"Menu error: {e}")
-            # Fallback: always send new message
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
                 text=f"📊 **{symbol} - Analysis Menu**\n\nChoose an option:",
@@ -623,11 +614,9 @@ class TelegramTradingBot:
             chat_id = update.callback_query.message.chat_id
         
         try:
-            # Get data for both symbols
             analyzer1 = TradingAnalyzer(symbol1)
             analyzer2 = TradingAnalyzer(symbol2)
             
-            # Get ticker info
             ticker_info1 = get_ticker_info(symbol1)
             ticker_info2 = get_ticker_info(symbol2)
             
@@ -639,7 +628,6 @@ class TelegramTradingBot:
                 await context.bot.send_message(chat_id, f"❌ Ticker {symbol2} not found")
                 return
             
-            # Analyze 6 months for comparison
             df1 = analyzer1.analyze_period(6)
             df2 = analyzer2.analyze_period(6)
             
@@ -651,7 +639,6 @@ class TelegramTradingBot:
                 await context.bot.send_message(chat_id, f"❌ No data for {symbol2}")
                 return
             
-            # Send comparison info
             price1 = ticker_info1.get('current_price', 0)
             price2 = ticker_info2.get('current_price', 0)
             change1 = ((df1['Close'].iloc[-1] / df1['Close'].iloc[0]) - 1) * 100
@@ -677,21 +664,18 @@ class TelegramTradingBot:
             
             await context.bot.send_message(chat_id, message, parse_mode='Markdown')
             
-            # Create and send comparison chart
             fig = analyzer1.create_comparison_chart(df1, symbol1, df2, symbol2, "6")
             
             buf = BytesIO()
             fig.savefig(buf, format='png', dpi=120, facecolor='black')
             buf.seek(0)
             
-            # Create back button keyboard
             keyboard = [
                 [InlineKeyboardButton("🔙 Back to Analysis", callback_data=f"select_{symbol1}")],
                 [InlineKeyboardButton("🏠 Main Menu", callback_data="start")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            # Send photo
             await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=buf,
@@ -699,7 +683,6 @@ class TelegramTradingBot:
                 reply_markup=reply_markup
             )
             
-            # Close the figure to free memory
             plt.close(fig)
             
         except Exception as e:
@@ -707,7 +690,7 @@ class TelegramTradingBot:
             await context.bot.send_message(chat_id, f"❌ Error comparing {symbol1} and {symbol2}")
     
     async def show_signals(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        """Show trading signals for the ticker with back button"""
+        """Show trading signals for the ticker"""
         try:
             await query.answer()
             
@@ -718,7 +701,7 @@ class TelegramTradingBot:
             )
             
             analyzer = TradingAnalyzer(symbol)
-            df = analyzer.analyze_period(3)  # Use 3 months for signals
+            df = analyzer.analyze_period(3)
             
             if df is None or df.empty:
                 await self._update_or_resend_message(
@@ -730,7 +713,6 @@ class TelegramTradingBot:
             
             latest = df.iloc[-1]
             
-            # Analyze signals
             signals = []
             score = 0
             
@@ -776,7 +758,6 @@ class TelegramTradingBot:
             else:
                 signals.append(("⚪ Volume", "Normal", 0))
             
-            # Build message
             signals_text = f"🎯 **TRADING SIGNALS for {symbol}:**\n\n"
             for icon, text, _ in signals:
                 signals_text += f"{icon} {text}\n"
@@ -796,7 +777,6 @@ class TelegramTradingBot:
             
             signals_text += "\n\n⚠️ *Note: These are automatic signals, not financial advice*"
             
-            # Create back button keyboard
             keyboard = [
                 [InlineKeyboardButton("📊 Back to Analysis", callback_data=f"select_{symbol}")],
                 [InlineKeyboardButton("📈 View Chart", callback_data=f"chart_{symbol}_3")],
@@ -821,7 +801,7 @@ class TelegramTradingBot:
             )
     
     async def show_data(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        """Show raw ticker data with back button"""
+        """Show raw ticker data"""
         try:
             await query.answer()
             
@@ -832,7 +812,7 @@ class TelegramTradingBot:
             )
             
             analyzer = TradingAnalyzer(symbol)
-            df = analyzer.analyze_period(1)  # 1 month of data
+            df = analyzer.analyze_period(1)
             
             if df is None or df.empty:
                 await self._update_or_resend_message(
@@ -842,7 +822,6 @@ class TelegramTradingBot:
                 )
                 return
             
-            # Prepare last 10 rows
             recent_data = df.tail(10)
             
             data_text = f"📋 **RECENT DATA for {symbol}:**\n\n"
@@ -862,7 +841,6 @@ class TelegramTradingBot:
                             f"${low:.2f} | ${close:.2f} | "
                             f"{volume:,.0f} | {rsi:.1f}\n")
             
-            # Keyboard for download and back
             keyboard = [
                 [InlineKeyboardButton("📥 Download CSV (Full Data)", callback_data=f"download_{symbol}")],
                 [InlineKeyboardButton("📊 Back to Analysis", callback_data=f"select_{symbol}")],
@@ -888,32 +866,28 @@ class TelegramTradingBot:
             )
     
     async def download_data(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        """Prepare CSV data download with back button"""
+        """Prepare CSV data download"""
         try:
             await query.answer("Preparing download...")
             
             analyzer = TradingAnalyzer(symbol)
-            df = analyzer.analyze_period(12)  # All available data
+            df = analyzer.analyze_period(12)
             
             if df is None or df.empty:
                 await query.answer("❌ No data available", show_alert=True)
                 return
             
-            # Convert to CSV
             csv_data = df.to_csv()
             
-            # Create file in memory
             csv_file = BytesIO(csv_data.encode())
             csv_file.name = f"{symbol}_data.csv"
             
-            # Create back button keyboard
             keyboard = [
                 [InlineKeyboardButton("📊 Back to Analysis", callback_data=f"select_{symbol}")],
                 [InlineKeyboardButton("🏠 Main Menu", callback_data="start")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            # Send file
             await context.bot.send_document(
                 chat_id=query.message.chat_id,
                 document=csv_file,
@@ -929,12 +903,10 @@ class TelegramTradingBot:
     async def settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show settings menu"""
         if isinstance(update, Update) and update.message:
-            # Command from message
             message = update.message
             user_id = message.from_user.id
             chat_id = message.chat_id
         else:
-            # Callback from query
             query = update.callback_query
             await query.answer()
             message = query.message
@@ -1002,10 +974,9 @@ Available: 1d, 1wk, 1mo
             periods_str = context.args[0]
             periods = [int(p.strip()) for p in periods_str.split(',')]
             
-            # Validate periods
             valid_periods = []
             for p in periods:
-                if 1 <= p <= 60:  # Max 5 years
+                if 1 <= p <= 60:
                     valid_periods.append(p)
                 else:
                     await update.message.reply_text(f"⚠️ Period {p} months ignored (must be 1-60)")
@@ -1055,9 +1026,8 @@ Available: 1d, 1wk, 1mo
                 await context.bot.send_message(chat_id, f"❌ {symbol} not found")
                 return
             
-            # Quick analysis
             analyzer = TradingAnalyzer(symbol)
-            df = analyzer.analyze_period(1)  # 1 month
+            df = analyzer.analyze_period(1)
             
             if df is None or df.empty:
                 await context.bot.send_message(chat_id, f"❌ No data for {symbol}")
@@ -1065,23 +1035,19 @@ Available: 1d, 1wk, 1mo
             
             latest = df.iloc[-1]
             
-            # Prepare data
             current_price = ticker_info.get('current_price', latest.get('Close', 0))
             rsi = latest.get('RSI', 0)
             macd = latest.get('MACD', 0)
             
-            # Format price
             if isinstance(current_price, (int, float)):
                 price_str = f"${current_price:.2f}"
             else:
                 price_str = "N/A"
             
-            # Determine SMA trend
             sma_20 = latest.get('SMA_20', 0)
             sma_50 = latest.get('SMA_50', 0)
             sma_trend = "↑" if sma_20 > sma_50 else "↓"
             
-            # Determine RSI signal
             if rsi < 30:
                 signal = "🟢 Buy"
             elif rsi > 70:
@@ -1102,14 +1068,12 @@ Available: 1d, 1wk, 1mo
             
             await context.bot.send_message(chat_id, message, parse_mode='Markdown')
             
-            # Send quick chart
             fig = analyzer.create_quick_chart(df)
             
             buf = BytesIO()
             fig.savefig(buf, format='png', dpi=120, facecolor='black')
             buf.seek(0)
             
-            # Create back button keyboard
             keyboard = [
                 [InlineKeyboardButton("📊 Full Analysis", callback_data=f"select_{symbol}")],
                 [InlineKeyboardButton("🔙 Back to Menu", callback_data="start")]
@@ -1123,7 +1087,6 @@ Available: 1d, 1wk, 1mo
                 reply_markup=reply_markup
             )
             
-            # Close figure
             plt.close(fig)
             
         except Exception as e:
@@ -1131,7 +1094,7 @@ Available: 1d, 1wk, 1mo
             await context.bot.send_message(chat_id, f"❌ Quick analysis error for {symbol}")
     
     async def analyze_ticker_from_callback(self, query, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        """Analyze ticker from callback - handles both photos and text"""
+        """Analyze ticker from callback"""
         user_id = query.from_user.id
         
         try:
@@ -1145,17 +1108,14 @@ Available: 1d, 1wk, 1mo
                 )
                 return
             
-            # Prepare data
             current_price = ticker_info.get('current_price', 0)
             market_cap = ticker_info.get('market_cap', 0)
             
-            # Format price
             if isinstance(current_price, (int, float)):
                 price_str = f"${current_price:.2f}"
             else:
                 price_str = "N/A"
             
-            # Format market cap
             if isinstance(market_cap, (int, float)):
                 market_cap_str = f"${market_cap:,.0f}"
             else:
@@ -1225,7 +1185,6 @@ Click buttons below for detailed analysis:
             analyzer = TradingAnalyzer(symbol)
             all_data = {}
             
-            # Collect data for all periods
             for period in sorted(periods):
                 df = analyzer.analyze_period(period)
                 if df is not None and not df.empty:
@@ -1239,14 +1198,12 @@ Click buttons below for detailed analysis:
                 )
                 return
             
-            # Create detailed message
             message = f"🔍 **DEEP ANALYSIS - {symbol}**\n\n"
             
             for period, df in all_data.items():
                 start_price = df['Close'].iloc[0]
                 end_price = df['Close'].iloc[-1]
                 price_change = ((end_price / start_price) - 1) * 100
-                # Use average RSI for the period
                 rsi_window = min(5, len(df))
                 avg_rsi = df['RSI'].tail(rsi_window).mean() if 'RSI' in df.columns else 50
                 macd_signal = "↑" if df['MACD'].iloc[-1] > df['Signal_Line'].iloc[-1] else "↓" if 'MACD' in df.columns else "N/A"
@@ -1260,7 +1217,6 @@ Click buttons below for detailed analysis:
                 message += f"  • MACD: {macd_signal}\n"
                 message += f"  • Volume: {volume_trend}\n\n"
             
-            # Create keyboard
             keyboard = [
                 [InlineKeyboardButton("📈 View All Charts", callback_data=f"menu_{symbol}")],
                 [InlineKeyboardButton("🎯 Trading Signals", callback_data=f"signals_{symbol}")],
@@ -1292,13 +1248,11 @@ Click buttons below for detailed analysis:
         query = update.callback_query
         
         try:
-            # Answer immediately to prevent timeout
             await query.answer()
             
             data = query.data
             
             if data == "start":
-                # Show start menu
                 user = query.from_user
                 welcome_message = f"""
 👋 Welcome {user.first_name} to the Trading Bot!
@@ -1446,9 +1400,7 @@ Click buttons below for detailed analysis:
         """Handle text messages (direct analysis)"""
         text = update.message.text.strip().upper()
         
-        # If it looks like a ticker symbol
         if 1 <= len(text) <= 10 and all(c.isalpha() or c in '-. ' for c in text):
-            # Simulate /analyze command
             context.args = [text]
             await self.analyze_ticker(update, context)
         else:
@@ -1457,60 +1409,111 @@ Click buttons below for detailed analysis:
                 f"Or search with:\n/search {text}"
             )
     
+    async def stop(self, signum=None, frame=None):
+        """Stop the bot gracefully"""
+        if self.is_running and self.application:
+            logger.info("Stopping bot...")
+            self.is_running = False
+            await self.application.stop()
+            await self.application.shutdown()
+            logger.info("Bot stopped")
+    
     def run(self):
-        """Start the bot"""
-        application = Application.builder().token(self.token).build()
-        
-        # Commands
-        application.add_handler(CommandHandler("start", self.start))
-        application.add_handler(CommandHandler("help", self.help_command))
-        application.add_handler(CommandHandler("search", self.search_ticker))
-        application.add_handler(CommandHandler("analyze", self.analyze_ticker))
-        application.add_handler(CommandHandler("quick", self.quick_analyze))
-        application.add_handler(CommandHandler("compare", self.compare_tickers))
-        application.add_handler(CommandHandler("settings", self.settings_menu))
-        application.add_handler(CommandHandler("periods", self.set_periods_command))
-        
-        # Add interval command handler
-        async def set_interval_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            """Set data interval"""
-            if not context.args:
-                await update.message.reply_text(
-                    "❌ Specify interval:\n/interval 1d\n/interval 1wk\n/interval 1mo"
-                )
-                return
+        """Start the bot with improved error handling for Render"""
+        try:
+            self.application = Application.builder().token(self.token).build()
             
-            interval = context.args[0].lower()
-            valid_intervals = ['1d', '1wk', '1mo']
+            # Set up signal handlers for graceful shutdown
+            signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(self.stop()))
+            signal.signal(signal.SIGTERM, lambda s, f: asyncio.create_task(self.stop()))
             
-            if interval not in valid_intervals:
-                await update.message.reply_text(
-                    f"❌ Invalid interval. Use: {', '.join(valid_intervals)}"
-                )
-                return
+            # Commands
+            self.application.add_handler(CommandHandler("start", self.start))
+            self.application.add_handler(CommandHandler("help", self.help_command))
+            self.application.add_handler(CommandHandler("search", self.search_ticker))
+            self.application.add_handler(CommandHandler("analyze", self.analyze_ticker))
+            self.application.add_handler(CommandHandler("quick", self.quick_analyze))
+            self.application.add_handler(CommandHandler("compare", self.compare_tickers))
+            self.application.add_handler(CommandHandler("settings", self.settings_menu))
+            self.application.add_handler(CommandHandler("periods", self.set_periods_command))
             
-            user_id = update.effective_user.id
-            if user_id not in self.user_data:
-                self.user_data[user_id] = {}
+            # Add interval command handler
+            async def set_interval_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+                if not context.args:
+                    await update.message.reply_text(
+                        "❌ Specify interval:\n/interval 1d\n/interval 1wk\n/interval 1mo"
+                    )
+                    return
+                
+                interval = context.args[0].lower()
+                valid_intervals = ['1d', '1wk', '1mo']
+                
+                if interval not in valid_intervals:
+                    await update.message.reply_text(
+                        f"❌ Invalid interval. Use: {', '.join(valid_intervals)}"
+                    )
+                    return
+                
+                user_id = update.effective_user.id
+                if user_id not in self.user_data:
+                    self.user_data[user_id] = {}
+                
+                self.user_data[user_id]['interval'] = interval
+                await update.message.reply_text(f"✅ Interval set to: {interval}")
             
-            self.user_data[user_id]['interval'] = interval
-            await update.message.reply_text(f"✅ Interval set to: {interval}")
-        
-        application.add_handler(CommandHandler("interval", set_interval_command))
-        
-        # Callback query
-        application.add_handler(CallbackQueryHandler(self.callback_handler))
-        
-        # Text messages (for direct analysis)
-        application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND, 
-            self.handle_text_message
-        ))
-        
-        logger.info("Bot starting...")
-        
-        # Start polling
-        application.run_polling()
+            self.application.add_handler(CommandHandler("interval", set_interval_command))
+            
+            # Callback query
+            self.application.add_handler(CallbackQueryHandler(self.callback_handler))
+            
+            # Text messages
+            self.application.add_handler(MessageHandler(
+                filters.TEXT & ~filters.COMMAND, 
+                self.handle_text_message
+            ))
+            
+            logger.info("Bot starting with improved polling...")
+            self.is_running = True
+            
+            # Use different approach for Render to avoid conflicts
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def run_bot():
+                try:
+                    # Start the bot with specific parameters to avoid conflicts
+                    await self.application.initialize()
+                    await self.application.start()
+                    
+                    # Use a specific offset to avoid conflicts with other instances
+                    await self.application.updater.start_polling(
+                        poll_interval=2.0,
+                        timeout=30,
+                        drop_pending_updates=True,
+                        allowed_updates=Update.ALL_TYPES
+                    )
+                    
+                    logger.info("Bot is now running!")
+                    
+                    # Keep the bot running
+                    while self.is_running:
+                        await asyncio.sleep(1)
+                        
+                except Exception as e:
+                    logger.error(f"Error in bot execution: {e}")
+                    raise
+                finally:
+                    if self.application.running:
+                        await self.application.stop()
+                    if self.application.updater.running:
+                        await self.application.updater.stop()
+            
+            # Run the bot
+            loop.run_until_complete(run_bot())
+            
+        except Exception as e:
+            logger.error(f"Fatal error in bot: {e}")
+            raise
 
 
 def main():
@@ -1526,11 +1529,14 @@ def main():
     
     print("🚀 Starting Telegram Trading Bot with health server...")
     
+    # Import here to avoid circular imports
     import threading
     from health_server import start_health_server
     
+    # Start health server in a separate thread
     health_thread = start_health_server()
     
+    # Start the bot
     bot = TelegramTradingBot(TELEGRAM_BOT_TOKEN)
     bot.run()
 
