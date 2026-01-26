@@ -171,6 +171,50 @@ class TradingAnalyzer:
                 'regularMarketPrice': data['Close'].iloc[-1] if len(data) > 0 else 0,
                 'currency': 'USD'
             }
+        def _fetch_with_proxy_fallback(self, ticker_symbol: str, period: str):
+            """Try to fetch data with proxy if direct connection fails"""
+            import requests
+            import json
+            
+            # List of free proxy servers (rotating)
+            proxies_list = [
+                None,  # Try direct first
+                # Add more proxies if needed
+            ]
+            
+            for proxy in proxies_list:
+                try:
+                    print(f"Trying with proxy: {proxy}")
+                    
+                    # Create session
+                    session = requests.Session()
+                    if proxy:
+                        session.proxies = {"http": proxy, "https": proxy}
+                    
+                    # Custom headers
+                    session.headers.update({
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/json',
+                    })
+                    
+                    # Fetch using yfinance with custom session
+                    import yfinance as yf
+                    data = yf.download(
+                        ticker_symbol,
+                        period=period,
+                        progress=False,
+                        threads=False,
+                        session=session
+                    )
+                    
+                    if not data.empty:
+                        return data
+                        
+                except Exception as e:
+                    print(f"Proxy attempt failed: {e}")
+                    continue
+            
+            return None        
     
     def _flatten_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Flatten MultiIndex columns to simple column names"""
