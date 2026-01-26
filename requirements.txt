@@ -1,0 +1,16 @@
+# Core dependencies - Compatible versions
+python-telegram-bot==20.7
+yfinance==0.2.38
+pandas==2.2.0
+numpy==1.24.3
+matplotlib==3.8.0
+python-dotenv==1.0.0
+ta==0.11.0
+
+# HTTP libraries - Compatible with python-telegram-bot 20.7
+httpx==0.25.2
+aiohttp==3.8.6
+requests==2.31.0
+
+# Data science
+scipy==1.10.1
