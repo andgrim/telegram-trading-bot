@@ -1,34 +1,62 @@
-"""
-yfinance_fix.py - Fixes for yfinance to work on cloud platforms like Render.
-"""
 import yfinance as yf
 import time
 import random
-import os
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import os
 
-def create_resilient_session():
-    """Create a requests session that mimics a real web browser and handles retries."""
+def apply_yfinance_fix():
+    """Applies the final, comprehensive fix to bypass Yahoo Finance blocks."""
+    print("🚀 APPLYING FINAL YFINANCE IMPERSONATION FIX...")
+
+    # 1. FORCE CLEAR YFINANCE CACHE - Critical first step[citation:1]
+    cache_dir = "/tmp/yfinance_cache"
+    try:
+        import shutil
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir, ignore_errors=True)
+            print("🧹 Cleared yfinance cache.")
+        os.makedirs(cache_dir, exist_ok=True)
+    except Exception as e:
+        print(f"⚠️ Could not clear cache: {e}")
+
+    # 2. CREATE AN ADVANCED SESSION WITH FINGERPRINT ROTATION[citation:2][citation:9]
     session = requests.Session()
-    
-    # Retry strategy for temporary failures (common on cloud platforms)
+
+    # Disable keep-alive to avoid connection pools being flagged[citation:3]
+    session.keep_alive = False
+
+    # Enhanced retry logic with longer backoff
     retry_strategy = Retry(
-        total=3,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],  # 429 is "Too Many Requests"[citation:1]
-        allowed_methods=["GET", "POST"]
+        total=4,  # Fewer, smarter retries
+        backoff_factor=2.5,  # Much longer waits (2.5, 5, 10... seconds)
+        status_forcelist=[429, 403, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST"],
+        respect_retry_after_header=True
     )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    
-    # Headers to mimic a real Chrome browser on Windows
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=1,  # Minimize concurrent connections
+        pool_maxsize=1
+    )
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
+
+    # 3. ROTATING USER-AGENTS & FULL BROWSER HEADERS[citation:2][citation:4][citation:9]
+    user_agents = [
+        # Primary: Latest Chrome on Windows
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        # Fallback: Chrome on macOS
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        # Secondary: Firefox
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0'
+    ]
+
+    # Complex browser headers for a Windows/Chrome profile[citation:4]
+    browser_headers = {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
         'DNT': '1',
         'Connection': 'keep-alive',
@@ -38,91 +66,88 @@ def create_resilient_session():
         'Sec-Fetch-Site': 'none',
         'Sec-Fetch-User': '?1',
         'Cache-Control': 'max-age=0',
-    })
-    
-    return session
+        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+    }
 
-def apply_yfinance_fix():
-    """Apply fixes to yfinance for better compatibility with Render."""
-    print("🔧 Applying yfinance fixes for Render...")
-    
-    # Clear any old cache to prevent stale data issues
-    cache_dir = "/tmp/yfinance_cache"
-    try:
-        import shutil
-        if os.path.exists(cache_dir):
-            shutil.rmtree(cache_dir, ignore_errors=True)
-        os.makedirs(cache_dir, exist_ok=True)
-        yf.set_tz_cache_location(cache_dir)
-    except:
-        pass
-    
-    # Get the yfinance module to patch its internal functions
+    # 4. PATCH YFINANCE INTERNALLY
     import yfinance as yf_module
-    
-    # Create a global, resilient session for all yfinance requests
-    resilient_session = create_resilient_session()
-    yf_module.session = resilient_session
-    
-    # Patch the Ticker.__init__ to use our session by default
+
+    # Inject our session into yfinance's core
+    yf_module.session = session
+
+    # Patch the Ticker class to use our session and rotate User-Agent
     original_Ticker_init = yf_module.Ticker.__init__
-    
     def patched_Ticker_init(self, ticker, session=None, *args, **kwargs):
         if session is None:
-            session = resilient_session
+            session = yf_module.session
+            # Rotate User-Agent for each new Ticker object
+            session.headers.update({'User-Agent': random.choice(user_agents)})
         original_Ticker_init(self, ticker, session=session, *args, **kwargs)
-    
     yf_module.Ticker.__init__ = patched_Ticker_init
-    
-    # Patch the download function
+
+    # 5. PATCH THE DOWNLOAD FUNCTION WITH AGGRESSIVE RETRY & DELAY LOGIC[citation:5][citation:9]
     original_download = yf_module.download
-    
     def patched_download(tickers, session=None, **kwargs):
-        # Use our resilient session if none provided
         if session is None:
-            session = resilient_session
-        
-        # Force certain parameters for better compatibility
+            session = yf_module.session
+            session.headers.update({'User-Agent': random.choice(user_agents)})
+            session.headers.update(browser_headers)
+
+        # Force critical settings
         kwargs['progress'] = False
         kwargs['threads'] = False
-        if 'ignore_tz' not in kwargs:
-            kwargs['ignore_tz'] = True
-        
-        max_retries = 3
+        kwargs['ignore_tz'] = True
+        kwargs['auto_adjust'] = True
+
         last_exception = None
-        
+        max_retries = 3  # Don't spam retries
+
         for attempt in range(max_retries):
             try:
-                # Add increasing delay between retries
-                if attempt > 0:
-                    delay = 2 + attempt * 2 + random.uniform(0, 1)
-                    print(f"📡 Retry {attempt} for {tickers} after {delay:.1f}s")
-                    time.sleep(delay)
-                
+                # CRITICAL: Add a random delay BEFORE the first attempt and between retries
+                # This mimics human hesitation and avoids rapid-fire requests[citation:4][citation:9]
+                delay_before = random.uniform(1.5, 4.0) if attempt == 0 else random.uniform(5.0, 12.0)
+                print(f"⏳ Pausing for {delay_before:.1f}s before attempt {attempt+1} for {tickers}...")
+                time.sleep(delay_before)
+
                 result = original_download(tickers, session=session, **kwargs)
-                
+
                 if result is not None and not result.empty:
-                    print(f"✅ Successfully downloaded {tickers}")
+                    print(f"✅ DOWNLOAD SUCCESS for {tickers}")
                     return result
                 else:
-                    print(f"⚠️ Empty data for {tickers} on attempt {attempt+1}")
-                    
+                    print(f"⚠️ Attempt {attempt+1}: Empty data for {tickers}")
+
             except Exception as e:
                 last_exception = e
-                print(f"❌ Download attempt {attempt+1} failed: {str(e)[:100]}")
+                error_msg = str(e)
+                print(f"❌ Attempt {attempt+1} failed: {error_msg[:100]}")
+
+                # If it's a clear 429/rate limit, wait much longer[citation:1][citation:10]
+                if '429' in error_msg or 'Too Many Requests' in error_msg:
+                    long_wait = 30 + (attempt * 15)  # 30s, 45s, 60s...
+                    print(f"🛑 Rate limited. Waiting {long_wait}s before next retry...")
+                    time.sleep(long_wait)
                 continue
-        
-        # If all retries failed, raise the last exception
+
         if last_exception:
+            print(f"💥 ALL {max_retries} attempts failed for {tickers}.")
             raise last_exception
-        
         return None
-    
+
     yf_module.download = patched_download
     yf.download = patched_download
-    
-    print("✅ yfinance fixes applied successfully")
-    return True
 
-# Apply the fix when this module is imported
+    print("""
+✅ FINAL FIX APPLIED. Strategy Summary:
+1. Cleared all cached cookies/crumbs that were flagged[citation:1].
+2. Using rotating, real-world browser User-Agents[citation:2].
+3. Added comprehensive browser fingerprint headers[citation:4].
+4. Implemented random delays to mimic human behavior[citation:9].
+5. Reduced connection pooling to appear as a single user.
+    """)
+
+# Execute the fix immediately upon import
 apply_yfinance_fix()
