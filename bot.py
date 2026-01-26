@@ -1,31 +1,12 @@
+import yfinance_fix
+yfinance_fix.apply_yfinance_fix()
+
+
 import asyncio
 import logging
 import sys
 import os
-from typing import Dict, List
-import pandas as pd
-import yfinance_fix
-yfinance_fix.apply_yfinance_fix()
 
-from telegram import (
-    Update, 
-    InlineKeyboardButton, 
-    InlineKeyboardMarkup
-)
-from telegram.ext import (
-    Application, 
-    CommandHandler, 
-    MessageHandler, 
-    CallbackQueryHandler,
-    ContextTypes,
-    filters
-)
-
-from config import CONFIG
-from analyzer import TradingAnalyzer
-from chart_generator import ChartGenerator
-from data_manager import DataManager
-import yfinance as yf
 
 # Set up logging
 logging.basicConfig(
