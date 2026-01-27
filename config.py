@@ -7,7 +7,7 @@ load_dotenv()
 
 @dataclass
 class TradingConfig:
-    """Configuration for trading analysis system with reversal detection"""
+    """Configuration for trading analysis system with extended timeframe support"""
     
     # Telegram Bot Token
     TELEGRAM_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "")
@@ -29,8 +29,8 @@ class TradingConfig:
     # Reversal detection settings
     REVERSAL_SETTINGS: Dict = None
     
-    # Time periods mapping
-    TIME_PERIODS: Dict = None
+    # Extended timeframes
+    TIME_PERIODS: List[str] = None
     
     # yfinance settings
     YFINANCE_MAX_RETRIES: int = 5
@@ -44,7 +44,7 @@ class TradingConfig:
             self.CHART_STYLE = self._get_chart_style()
         
         if self.MOVING_AVERAGES is None:
-            self.MOVING_AVERAGES = [9, 20, 50]
+            self.MOVING_AVERAGES = [9, 20, 50, 100, 200]  # Added 100 and 200 for long-term analysis
         
         if self.REVERSAL_SETTINGS is None:
             self.REVERSAL_SETTINGS = {
@@ -56,11 +56,7 @@ class TradingConfig:
             }
         
         if self.TIME_PERIODS is None:
-            self.TIME_PERIODS = {
-                '3m': '3mo',
-                '6m': '6mo',
-                '1y': '1y'
-            }
+            self.TIME_PERIODS = ['3m', '6m', '1y', '2y', '3y', '5y']
     
     def _get_clean_colors(self) -> Dict:
         """Return clean color scheme for simplified charts"""
@@ -72,6 +68,8 @@ class TradingConfig:
             'ma_9': '#00FF9D',
             'ma_20': '#FF6B9D',
             'ma_50': '#9D4EDD',
+            'ma_100': '#FFD700',  # Gold for 100 MA
+            'ma_200': '#FF8C00',  # Dark orange for 200 MA
             'volume_up': '#00FF9D',
             'volume_down': '#FF0080',
             'ad_line': '#00E0FF',

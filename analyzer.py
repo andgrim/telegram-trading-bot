@@ -6,47 +6,45 @@ import warnings
 import time
 import asyncio
 import os
+from datetime import datetime, timedelta
 
 warnings.filterwarnings('ignore')
 
-# Apply yfinance fixes before importing other modules
-import yfinance_fix
-yfinance_fix.apply_yfinance_fix()
-
-# Using pure Python TA library instead of compiled talib
+# Using pure Python TA library
 import ta
 
 from config import CONFIG
 
 class TradingAnalyzer:
-    """Comprehensive analyzer for technical analysis with reversal detection"""
+    """Comprehensive analyzer for technical analysis with extended timeframes"""
     
     def __init__(self):
         self.config = CONFIG
     
     async def analyze_ticker(self, ticker_symbol: str, period: str = '1y') -> Dict:
-        """Perform comprehensive analysis of a ticker for specified period"""
+        """Perform comprehensive analysis with complete indicators for all timeframes"""
         try:
             print(f"🔍 Starting analysis for {ticker_symbol} ({period})")
             
-            # Clear cache at the start
-            cache_dir = "/tmp/yfinance_cache"
-            if os.path.exists(cache_dir):
-                import shutil
-                shutil.rmtree(cache_dir, ignore_errors=True)
+            # Map period to yfinance format with extended data for complete indicators
+            yf_period_map = {
+                '3m': '9mo',    # Get 9 months data for 3m analysis
+                '6m': '1y',     # Get 1 year data for 6m analysis
+                '1y': '2y',     # Get 2 years data for 1y analysis
+                '2y': '3y',     # Get 3 years data for 2y analysis
+                '3y': '5y',     # Get 5 years data for 3y analysis
+                '5y': '10y'     # Get 10 years data for 5y analysis
+            }
             
-            yf.set_tz_cache_location(cache_dir)
+            fetch_period = yf_period_map.get(period, '2y')
             
-            # Map period
-            yf_period = self.config.TIME_PERIODS.get(period, period)
-            
-            # Try multiple methods to get data
-            data = await self._fetch_data_with_retry(ticker_symbol, yf_period)
+            # Fetch extended data
+            data = await self._fetch_data_with_retry(ticker_symbol, fetch_period)
             
             if data is None or data.empty:
                 return {
                     'success': False, 
-                    'error': f'No data found for {ticker_symbol} (period={period})'
+                    'error': f'No data found for {ticker_symbol}'
                 }
             
             print(f"✅ Data fetched: {len(data)} rows")
@@ -54,11 +52,14 @@ class TradingAnalyzer:
             # Flatten MultiIndex columns
             data = self._flatten_dataframe(data)
             
+            # Trim data to requested period while keeping enough for indicators
+            data = self._trim_to_period(data, period)
+            
             # Get ticker info
             info = await self._get_ticker_info(ticker_symbol, data)
             
-            # Calculate technical indicators
-            data = self._calculate_indicators(data)
+            # Calculate complete technical indicators
+            data = self._calculate_complete_indicators(data, period)
             
             # Get fundamental analysis
             fundamental = self._analyze_fundamentals(info)
@@ -95,57 +96,81 @@ class TradingAnalyzer:
             traceback.print_exc()
             return {'success': False, 'error': str(e)}
     
+    def _trim_to_period(self, data: pd.DataFrame, period: str) -> pd.DataFrame:
+        """Trim data to requested period while keeping enough for indicator calculations"""
+        # Define how many trading days to keep for each period
+        # (approximately 252 trading days per year)
+        period_trading_days = {
+            '3m': 63,    # 3 months
+            '6m': 126,   # 6 months
+            '1y': 252,   # 1 year
+            '2y': 504,   # 2 years
+            '3y': 756,   # 3 years
+            '5y': 1260   # 5 years
+        }
+        
+        days_to_keep = period_trading_days.get(period, 252)
+        
+        # Add buffer for indicator calculations (especially for long periods)
+        buffer_days = {
+            '3m': 60,    # Additional 2 months
+            '6m': 90,    # Additional 3 months
+            '1y': 180,   # Additional 6 months
+            '2y': 250,   # Additional 10 months
+            '3y': 300,   # Additional 1 year
+            '5y': 500    # Additional 2 years
+        }
+        
+        days_to_keep += buffer_days.get(period, 180)
+        
+        # Ensure we don't exceed available data
+        if len(data) > days_to_keep:
+            return data.iloc[-days_to_keep:]
+        else:
+            return data
+    
     async def _fetch_data_with_retry(self, ticker_symbol: str, yf_period: str) -> pd.DataFrame:
-        """Fetch data with multiple retries and fallbacks"""
-        max_retries = 5
+        """Fetch data with multiple retries for extended timeframes"""
+        max_retries = 3
         
         for attempt in range(max_retries):
             try:
-                print(f"Attempt {attempt + 1} to fetch {ticker_symbol}")
+                print(f"Attempt {attempt + 1}/{max_retries} to fetch {ticker_symbol} for {yf_period}")
                 
-                # Method 1: Use Ticker.history (most reliable)
-                try:
-                    ticker = yf.Ticker(ticker_symbol)
-                    
-                    # Small delay before request
-                    if attempt > 0:
-                        time.sleep(1 + attempt)
-                    
-                    # Get historical data
-                    data = ticker.history(period=yf_period, interval="1d")
-                    
-                    if data is not None and not data.empty:
-                        print(f"✅ Data obtained via Ticker.history ({len(data)} rows)")
-                        return data
-                except Exception as e:
-                    print(f"Ticker.history failed: {str(e)}")
+                # Add delay between retries
+                if attempt > 0:
+                    await asyncio.sleep(attempt * 2)
                 
-                # Method 2: Use yf.download as fallback
-                if attempt >= 2:  # Try download after 2 failures
-                    print(f"Trying yf.download for {ticker_symbol}")
-                    time.sleep(2)
-                    
-                    data = yf.download(
-                        ticker_symbol,
-                        period=yf_period,
-                        progress=False,
-                        threads=False,
-                        ignore_tz=True
-                    )
-                    
-                    if data is not None and not data.empty:
-                        print(f"✅ Data obtained via yf.download ({len(data)} rows)")
-                        return data
+                # For longer periods, use yf.download with optimized parameters
+                data = yf.download(
+                    tickers=ticker_symbol,
+                    period=yf_period,
+                    interval="1d",
+                    progress=False,
+                    ignore_tz=True,
+                    prepost=False,
+                    repair=True,
+                    threads=False,
+                    auto_adjust=True
+                )
+                
+                if data is not None and not data.empty:
+                    print(f"✅ Successfully fetched {len(data)} rows for {ticker_symbol}")
+                    return data
                 
             except Exception as e:
-                print(f"Fetch attempt {attempt + 1} failed: {str(e)}")
+                print(f"Attempt {attempt + 1} failed: {str(e)[:100]}...")
                 
                 if attempt == max_retries - 1:
-                    print("All data fetch methods failed")
-                    raise e
-                
-                # Exponential backoff
-                time.sleep(2 ** attempt)
+                    print(f"❌ All attempts failed for {ticker_symbol}")
+                    # Try one last time with different method
+                    try:
+                        ticker = yf.Ticker(ticker_symbol)
+                        data = ticker.history(period=yf_period, interval="1d")
+                        if data is not None and not data.empty:
+                            return data
+                    except:
+                        return None
         
         return None
     
@@ -159,62 +184,28 @@ class TradingAnalyzer:
             if not info or 'symbol' not in info:
                 raise ValueError("Invalid ticker info")
             
+            # Add current price if missing
+            if 'regularMarketPrice' not in info and len(data) > 0:
+                info['regularMarketPrice'] = data['Close'].iloc[-1]
+            
+            # Add market cap if missing
+            if 'marketCap' not in info:
+                if 'regularMarketPrice' in info and 'sharesOutstanding' in info:
+                    info['marketCap'] = info['regularMarketPrice'] * info['sharesOutstanding']
+            
             return info
             
         except Exception as e:
-            print(f"Warning: Could not get ticker info: {e}")
+            print(f"Warning: Could not get complete ticker info: {e}")
             # Return basic info
             return {
                 'symbol': ticker_symbol,
                 'longName': ticker_symbol,
                 'shortName': ticker_symbol,
                 'regularMarketPrice': data['Close'].iloc[-1] if len(data) > 0 else 0,
-                'currency': 'USD'
+                'currency': 'USD',
+                'marketCap': None
             }
-        def _fetch_with_proxy_fallback(self, ticker_symbol: str, period: str):
-            """Try to fetch data with proxy if direct connection fails"""
-            import requests
-            import json
-            
-            # List of free proxy servers (rotating)
-            proxies_list = [
-                None,  # Try direct first
-                # Add more proxies if needed
-            ]
-            
-            for proxy in proxies_list:
-                try:
-                    print(f"Trying with proxy: {proxy}")
-                    
-                    # Create session
-                    session = requests.Session()
-                    if proxy:
-                        session.proxies = {"http": proxy, "https": proxy}
-                    
-                    # Custom headers
-                    session.headers.update({
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        'Accept': 'application/json',
-                    })
-                    
-                    # Fetch using yfinance with custom session
-                    import yfinance as yf
-                    data = yf.download(
-                        ticker_symbol,
-                        period=period,
-                        progress=False,
-                        threads=False,
-                        session=session
-                    )
-                    
-                    if not data.empty:
-                        return data
-                        
-                except Exception as e:
-                    print(f"Proxy attempt failed: {e}")
-                    continue
-            
-            return None        
     
     def _flatten_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Flatten MultiIndex columns to simple column names"""
@@ -222,8 +213,8 @@ class TradingAnalyzer:
             df.columns = df.columns.get_level_values(0)
         return df
     
-    def _calculate_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calculate comprehensive technical indicators using pure Python TA library"""
+    def _calculate_complete_indicators(self, data: pd.DataFrame, period: str) -> pd.DataFrame:
+        """Calculate complete technical indicators with extended lookback periods for long timeframes"""
         df = data.copy()
         
         # Ensure required columns
@@ -233,36 +224,44 @@ class TradingAnalyzer:
                 print(f"Warning: Missing required column: {col}")
                 return df
         
-        # Calculate moving averages
-        for ma in self.config.MOVING_AVERAGES:
+        # For longer timeframes, adjust some indicator parameters for better visualization
+        if period in ['2y', '3y', '5y']:
+            # Use longer moving averages for long-term trends
+            ma_periods = [20, 50, 100, 200]
+        else:
+            ma_periods = self.config.MOVING_AVERAGES
+        
+        # Calculate moving averages with forward fill
+        for ma in ma_periods:
             if len(df) >= ma:
                 # SMA (Simple Moving Average)
                 try:
                     sma_indicator = ta.trend.SMAIndicator(df['Close'], window=ma)
-                    df[f'SMA_{ma}'] = sma_indicator.sma_indicator()
+                    df[f'SMA_{ma}'] = sma_indicator.sma_indicator().ffill()
                 except Exception as e:
                     print(f"Error calculating SMA_{ma}: {e}")
                     df[f'SMA_{ma}'] = np.nan
                 
-                # EMA for 9-period only
-                if ma == 9:
+                # EMA for key periods
+                if ma in [9, 20, 50]:
                     try:
                         ema_indicator = ta.trend.EMAIndicator(df['Close'], window=ma)
-                        df['EMA_9'] = ema_indicator.ema_indicator()
+                        df[f'EMA_{ma}'] = ema_indicator.ema_indicator().ffill()
                     except Exception as e:
-                        print(f"Error calculating EMA_9: {e}")
-                        df['EMA_9'] = np.nan
+                        print(f"Error calculating EMA_{ma}: {e}")
+                        df[f'EMA_{ma}'] = np.nan
         
         # Calculate RSI (Relative Strength Index)
+        # For long timeframes, use standard 14-period RSI
         if len(df) >= self.config.RSI_PERIOD:
             try:
                 rsi_indicator = ta.momentum.RSIIndicator(df['Close'], window=self.config.RSI_PERIOD)
-                df['RSI'] = rsi_indicator.rsi()
+                df['RSI'] = rsi_indicator.rsi().ffill()
             except Exception as e:
                 print(f"Error calculating RSI: {e}")
                 df['RSI'] = np.nan
         
-        # Calculate MACD
+        # Calculate MACD with forward fill
         if len(df) >= self.config.MACD_SLOW:
             try:
                 macd_indicator = ta.trend.MACD(
@@ -271,16 +270,17 @@ class TradingAnalyzer:
                     window_fast=self.config.MACD_FAST,
                     window_sign=self.config.MACD_SIGNAL
                 )
-                df['MACD'] = macd_indicator.macd()
-                df['MACD_Signal'] = macd_indicator.macd_signal()
-                df['MACD_Hist'] = macd_indicator.macd_diff()
+                df['MACD'] = macd_indicator.macd().ffill()
+                df['MACD_Signal'] = macd_indicator.macd_signal().ffill()
+                df['MACD_Hist'] = macd_indicator.macd_diff().ffill()
             except Exception as e:
                 print(f"Error calculating MACD: {e}")
                 df['MACD'] = np.nan
                 df['MACD_Signal'] = np.nan
                 df['MACD_Hist'] = np.nan
         
-        # Calculate Bollinger Bands
+        # Calculate Bollinger Bands with forward fill
+        # For long timeframes, use 20-period BB
         if len(df) >= self.config.BB_PERIOD:
             try:
                 bb_indicator = ta.volatility.BollingerBands(
@@ -288,34 +288,108 @@ class TradingAnalyzer:
                     window=self.config.BB_PERIOD,
                     window_dev=self.config.BB_STD
                 )
-                df['BB_Upper'] = bb_indicator.bollinger_hband()
-                df['BB_Middle'] = bb_indicator.bollinger_mavg()
-                df['BB_Lower'] = bb_indicator.bollinger_lband()
+                df['BB_Upper'] = bb_indicator.bollinger_hband().ffill()
+                df['BB_Middle'] = bb_indicator.bollinger_mavg().ffill()
+                df['BB_Lower'] = bb_indicator.bollinger_lband().ffill()
             except Exception as e:
                 print(f"Error calculating Bollinger Bands: {e}")
                 df['BB_Upper'] = np.nan
                 df['BB_Middle'] = np.nan
                 df['BB_Lower'] = np.nan
         
-        # Calculate A/D Line
+        # Calculate A/D Line (Accumulation/Distribution)
         try:
             hl_range = df['High'] - df['Low']
             hl_range = hl_range.replace(0, 0.000001)
             mfm = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / hl_range
             mfv = mfm * df['Volume']
-            df['AD_Line'] = mfv.cumsum()
+            df['AD_Line'] = mfv.cumsum().ffill()
         except Exception as e:
             print(f"Error calculating A/D Line: {e}")
             df['AD_Line'] = 0
         
-        # Calculate volume moving average
+        # Calculate volume indicators
         try:
-            df['Volume_MA'] = df['Volume'].rolling(window=20).mean()
-            df['Volume_Ratio'] = df['Volume'] / df['Volume_MA']
+            df['Volume_MA'] = df['Volume'].rolling(window=20, min_periods=1).mean().ffill()
+            df['Volume_Ratio'] = (df['Volume'] / df['Volume_MA']).ffill()
         except Exception as e:
             print(f"Error calculating volume indicators: {e}")
             df['Volume_MA'] = np.nan
             df['Volume_Ratio'] = np.nan
+        
+        # Calculate additional indicators for better analysis (especially for long timeframes)
+        try:
+            # Stochastic Oscillator
+            stoch_indicator = ta.momentum.StochasticOscillator(
+                high=df['High'],
+                low=df['Low'],
+                close=df['Close'],
+                window=14,
+                smooth_window=3
+            )
+            df['Stoch_%K'] = stoch_indicator.stoch().ffill()
+            df['Stoch_%D'] = stoch_indicator.stoch_signal().ffill()
+        except Exception as e:
+            print(f"Error calculating Stochastic: {e}")
+            df['Stoch_%K'] = np.nan
+            df['Stoch_%D'] = np.nan
+        
+        try:
+            # Average True Range (ATR) for volatility
+            atr_indicator = ta.volatility.AverageTrueRange(
+                high=df['High'],
+                low=df['Low'],
+                close=df['Close'],
+                window=14
+            )
+            df['ATR'] = atr_indicator.average_true_range().ffill()
+        except Exception as e:
+            print(f"Error calculating ATR: {e}")
+            df['ATR'] = np.nan
+        
+        try:
+            # On Balance Volume (OBV)
+            obv_indicator = ta.volume.OnBalanceVolumeIndicator(close=df['Close'], volume=df['Volume'])
+            df['OBV'] = obv_indicator.on_balance_volume().ffill()
+        except Exception as e:
+            print(f"Error calculating OBV: {e}")
+            df['OBV'] = np.nan
+        
+        # For long timeframes, calculate yearly moving averages
+        if period in ['2y', '3y', '5y']:
+            try:
+                # 200-day moving average (approx 10 months)
+                if len(df) >= 200:
+                    sma_200 = ta.trend.SMAIndicator(df['Close'], window=200)
+                    df['SMA_200'] = sma_200.sma_indicator().ffill()
+                
+                # 100-day moving average (approx 5 months)
+                if len(df) >= 100:
+                    sma_100 = ta.trend.SMAIndicator(df['Close'], window=100)
+                    df['SMA_100'] = sma_100.sma_indicator().ffill()
+            except Exception as e:
+                print(f"Error calculating long-term MAs: {e}")
+        
+        # Remove early rows with NaN values for cleaner charts
+        # Find first non-NaN for all critical indicators
+        critical_cols = ['SMA_20', 'SMA_50', 'RSI', 'MACD']
+        if period in ['2y', '3y', '5y']:
+            critical_cols.extend(['SMA_100', 'SMA_200'])
+        
+        first_valid_idx = 0
+        for col in critical_cols:
+            if col in df.columns:
+                first_non_nan = df[col].first_valid_index()
+                if first_non_nan:
+                    idx_num = df.index.get_loc(first_non_nan)
+                    first_valid_idx = max(first_valid_idx, idx_num)
+        
+        # Keep data from first_valid_idx onwards (with a buffer)
+        start_idx = max(0, first_valid_idx - 10)
+        df = df.iloc[start_idx:].copy()
+        
+        # Fill any remaining NaN values with forward fill
+        df = df.ffill()
         
         return df
     
@@ -333,8 +407,8 @@ class TradingAnalyzer:
             return patterns
         
         try:
-            # Get recent data (last 10 periods)
-            recent = data.tail(10).copy()
+            # Get recent data (last 20 periods for better detection)
+            recent = data.tail(20).copy()
             latest = recent.iloc[-1]
             
             # Check for bullish reversal pattern
@@ -466,7 +540,8 @@ class TradingAnalyzer:
                 'forward_pe': info.get('forwardPE', np.nan),
                 'price_to_book': info.get('priceToBook', np.nan),
                 'price_to_sales': info.get('priceToSalesTrailing12Months', np.nan),
-                'peg_ratio': info.get('pegRatio', np.nan)
+                'peg_ratio': info.get('pegRatio', np.nan),
+                'market_cap': info.get('marketCap', np.nan)
             }
             
             # Profitability
@@ -494,7 +569,7 @@ class TradingAnalyzer:
             # Dividends
             fundamental['dividends'] = {
                 'dividend_yield': info.get('dividendYield', np.nan),
-                'dividend_rate': info.get('discountRate', np.nan),  # Changed from dividendRate
+                'dividend_rate': info.get('dividendRate', np.nan),
                 'payout_ratio': info.get('payoutRatio', np.nan)
             }
             
@@ -608,6 +683,15 @@ class TradingAnalyzer:
                             signals.append({'type': 'ABOVE_50MA', 'strength': 'MODERATE', 'direction': 'BULLISH'})
                         elif close < sma50:
                             signals.append({'type': 'BELOW_50MA', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+                
+                # Price position relative to 200 MA (for long timeframes)
+                if 'SMA_200' in data.columns:
+                    sma200 = latest['SMA_200']
+                    if not pd.isna(sma200):
+                        if close > sma200:
+                            signals.append({'type': 'ABOVE_200MA', 'strength': 'STRONG', 'direction': 'BULLISH'})
+                        elif close < sma200:
+                            signals.append({'type': 'BELOW_200MA', 'strength': 'STRONG', 'direction': 'BEARISH'})
             
             # Bollinger Bands signals
             if 'Close' in data.columns and 'BB_Upper' in data.columns and 'BB_Lower' in data.columns:
@@ -652,19 +736,36 @@ class TradingAnalyzer:
             bull_signals = len([s for s in signals if s['direction'] == 'BULLISH'])
             bear_signals = len([s for s in signals if s['direction'] == 'BEARISH'])
             
+            # For long timeframes, show yearly performance
+            yearly_change = None
+            if len(data) > 252:  # More than 1 year of data
+                yearly_price = data['Close'].iloc[-252] if len(data) > 252 else data['Close'].iloc[0]
+                yearly_change = ((current_price - yearly_price) / yearly_price * 100) if yearly_price != 0 else 0
+            
             summary = f"""
 📊 **ANALYSIS: {ticker}**
 
 **Price Information:**
 • Current: ${current_price:.2f}
-• Change: {price_change:+.2f}%
-• Volume: {self._format_number(volume)} ({volume_ratio:.1f}x avg)
+• Daily Change: {price_change:+.2f}%
+"""
+            
+            if yearly_change is not None:
+                summary += f"• Yearly Change: {yearly_change:+.2f}%\n"
+            
+            summary += f"""• Volume: {self._format_number(volume)} ({volume_ratio:.1f}x avg)
 
 **Key Technical Levels:**
 """
             
-            # Add moving averages
-            for ma in self.config.MOVING_AVERAGES:
+            # Add moving averages (show more for long timeframes)
+            ma_periods = [9, 20, 50]
+            if 'SMA_100' in data.columns:
+                ma_periods.append(100)
+            if 'SMA_200' in data.columns:
+                ma_periods.append(200)
+            
+            for ma in ma_periods:
                 ma_col = f'SMA_{ma}'
                 if ma_col in data.columns:
                     ma_val = latest[ma_col]
@@ -767,6 +868,16 @@ class TradingAnalyzer:
                     # Price vs MAs
                     above_count = sum([close > sma20, close > sma50])
                     overview += f"• Price above {above_count}/2 MAs\n"
+            
+            # Long-term trend analysis for extended timeframes
+            if 'SMA_200' in data.columns:
+                sma200 = latest['SMA_200']
+                close = latest['Close']
+                if not pd.isna(sma200):
+                    if close > sma200:
+                        overview += "• Long-term Trend: 🟢 ABOVE 200MA (Bullish)\n"
+                    else:
+                        overview += "• Long-term Trend: 🔴 BELOW 200MA (Bearish)\n"
             
             # Momentum Indicators
             overview += "\n**Momentum Indicators:**\n"
