@@ -1,6 +1,6 @@
 import matplotlib
-# IMPORTANTE: Usa il backend 'Agg' per Render (ambiente senza display)
-matplotlib.use('Agg')  # <-- AGGIUNGI QUESTA RIGA PRIMA DI IMPORTARE pyplot
+# IMPORTANT: Use 'Agg' backend for Render (headless environment)
+matplotlib.use('Agg')  # <-- ADD THIS LINE BEFORE IMPORTING pyplot
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -18,7 +18,7 @@ class ChartGenerator:
     def __init__(self):
         self.config = CONFIG
         
-        # Accedi agli attributi DOPO che __post_init__ è stato eseguito
+        # Access attributes AFTER __post_init__ has been executed
         self.colors = self.config.CHART_COLORS
         self.style = self.config.CHART_STYLE
         
@@ -163,8 +163,9 @@ class ChartGenerator:
             '5y': '5 Years'
         }.get(period, period.upper())
         
+        # FIXED: Changed 'title_size' to 'title_font_size'
         ax_price.set_title(f'{ticker} - Technical Analysis ({timeframe_label})', 
-                          fontsize=self.style['title_size'], 
+                          fontsize=self.style['title_font_size'], 
                           fontweight='bold',
                           color=self.colors['text'])
         ax_price.set_ylabel('Price (USD)', color=self.colors['text'], fontsize=10)
