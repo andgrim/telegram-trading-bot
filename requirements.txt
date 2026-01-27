@@ -1,8 +1,9 @@
-python-telegram-bot==20.7
-yfinance==0.2.33
-pandas==2.0.0
-numpy==1.24.0
-ta==0.10.2
-matplotlib==3.7.0
-python-dotenv==1.0.0
-pyTelegramBotAPI==4.23.0 
+# Web Server
+Flask==3.0.3
+python-telegram-bot==21.7
+yfinance==0.2.40
+pandas==2.2.3
+numpy==1.26.4
+ta==0.11.0
+matplotlib==3.8.0
+python-dotenv==1.0.1
