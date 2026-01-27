@@ -1,10 +1,9 @@
 import os
-from typing import Dict, List
-from dataclasses import dataclass
+from typing import Dict
+from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
-# Load environment variables from .env file if it exists
-# This is for local development only
+# Carica le variabili d'ambiente solo in locale
 if os.path.exists('.env'):
     load_dotenv()
 
@@ -12,17 +11,16 @@ if os.path.exists('.env'):
 class TradingConfig:
     """Configuration for trading analysis system"""
     
-    # Telegram Bot Token - from environment variable
+    # Telegram Bot Token
     TELEGRAM_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "")
     
     # Environment detection
     IS_RENDER: bool = os.getenv('RENDER') == 'true'
     IS_LOCAL: bool = not IS_RENDER
     
-    # Chart settings
-    CHART_THEME: str = "dark"
-    CHART_COLORS: Dict = None
-    CHART_STYLE: Dict = None
+    # Chart settings - IMPORTANTE: usare field() per inizializzazione differita
+    CHART_COLORS: Dict = field(default_factory=lambda: None)
+    CHART_STYLE: Dict = field(default_factory=lambda: None)
     
     # Technical analysis settings
     RSI_PERIOD: int = 14
@@ -33,16 +31,19 @@ class TradingConfig:
     BB_STD: int = 2
     
     # Reversal detection settings
-    REVERSAL_SETTINGS: Dict = None
+    REVERSAL_SETTINGS: Dict = field(default_factory=lambda: None)
     
     def __post_init__(self):
-        # Initialize settings
+        """Initialize attributes after the object is created"""
+        # Initialize CHART_COLORS if None
         if self.CHART_COLORS is None:
             self.CHART_COLORS = self._get_clean_colors()
         
+        # Initialize CHART_STYLE if None
         if self.CHART_STYLE is None:
             self.CHART_STYLE = self._get_chart_style()
         
+        # Initialize REVERSAL_SETTINGS if None
         if self.REVERSAL_SETTINGS is None:
             self.REVERSAL_SETTINGS = {
                 'rsi_oversold': 30,
@@ -68,7 +69,8 @@ class TradingConfig:
         return {
             'price_line_width': 1.0,
             'ma_line_width': 0.8,
-            'dpi': 100 if self.IS_RENDER else 120,  # Lower DPI for Render to save resources
+            'dpi': 100 if self.IS_RENDER else 120,
         }
 
+# Create a global instance
 CONFIG = TradingConfig()
