@@ -1,55 +1,67 @@
 #!/usr/bin/env python3
 """
-Main entry point - Hybrid Web Service for Render
+Main entry point for Render deployment - Hybrid Web Service
 """
 import os
-import threading
-from flask import Flask
 import sys
+from dotenv import load_dotenv
 
-# Aggiungi la cartella corrente al path di Python
+# Check if we're running locally (for development)
+IS_RENDER = os.getenv('RENDER') == 'true'
+
+if not IS_RENDER:
+    print("⚠️  Detected LOCAL environment, but using Render's main.py.")
+    print("   For local development, use: python run_local.py")
+    print("   Continuing with hybrid mode for testing...")
+    # Load .env file for local development
+    load_dotenv()
+
+# Add the current directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Inizializza l'app Flask
-app = Flask(__name__)
-
-# Health Check endpoint - RICHIESTO da Render
-@app.route('/')
-def health_check():
-    return f'✅ Trading Bot "telegram-trading-bot" is running', 200
-
-# Endpoint opzionale per forzare un riavvio del servizio
-@app.route('/restart', methods=['POST'])
-def soft_restart():
-    # Logica per riavviare il bot in modo sicuro
-    return 'Restart command received', 202
-
-def run_flask_server():
-    """Avvia il server Flask sulla porta fornita da Render"""
-    port = int(os.environ.get("PORT", 10000))  # Render imposta la variabile PORT
-    # NOTA: debug deve essere False in produzione
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+# Import Flask only if needed for Render
+if IS_RENDER:
+    import threading
+    from flask import Flask
+    
+    # Initialize Flask app
+    app = Flask(__name__)
+    
+    # Health Check endpoint - REQUIRED by Render
+    @app.route('/')
+    def health_check():
+        return '✅ Trading Bot is running on Render', 200
+    
+    @app.route('/health')
+    def health():
+        return {'status': 'healthy', 'environment': 'render'}, 200
+    
+    def run_flask_server():
+        """Run Flask server on Render-provided port"""
+        port = int(os.environ.get("PORT", 10000))
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 def run_telegram_bot():
-    """Avvia il tuo bot Telegram"""
-    print("🚀 Avvio del Trading Bot...")
+    """Run your Telegram bot logic"""
+    print("🤖 Starting Telegram Bot...")
     try:
-        # Importa e avvia la tua logica bot esistente
-        from bot import TradingBot  # Assicurati che questo import funzioni
+        from bot import TradingBot
         bot = TradingBot()
-        bot.run()  # Presuppone che .run() avvii il polling
+        bot.run()
     except Exception as e:
-        print(f"❌ Errore nell'avvio del bot: {e}")
+        print(f"❌ Error starting bot: {e}")
         import traceback
         traceback.print_exc()
 
 if __name__ == "__main__":
-    print("🔧 Avvio servizio ibrido (Web Server + Telegram Bot)...")
+    if IS_RENDER:
+        print("🌐 Starting hybrid service for Render (Web Server + Telegram Bot)...")
+        # Start Flask in a separate thread
+        flask_thread = threading.Thread(target=run_flask_server, daemon=True)
+        flask_thread.start()
+        print(f"📡 Flask server started on background thread.")
+    else:
+        print("💻 Running in development mode (local execution)")
     
-    # Avvia il server Flask in un thread separato
-    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-    flask_thread.start()
-    print(f"🌐 Server Flask avviato in background.")
-    
-    # Avvia il bot Telegram nel thread principale
+    # Start the Telegram bot in the main thread
     run_telegram_bot()
