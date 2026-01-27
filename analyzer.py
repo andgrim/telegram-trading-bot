@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 import warnings
-import time
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -28,18 +27,18 @@ class TradingAnalyzer:
             
             # Map period to yfinance format with extended data for complete indicators
             yf_period_map = {
-                '3m': '9mo',    # Get 9 months data for 3m analysis
+                '3m': '6mo',    # Get 6 months data for 3m analysis
                 '6m': '1y',     # Get 1 year data for 6m analysis
                 '1y': '2y',     # Get 2 years data for 1y analysis
                 '2y': '3y',     # Get 3 years data for 2y analysis
                 '3y': '5y',     # Get 5 years data for 3y analysis
-                '5y': '10y'     # Get 10 years data for 5y analysis
+                '5y': '6y'      # Get 6 years data for 5y analysis
             }
             
             fetch_period = yf_period_map.get(period, '2y')
             
-            # Fetch extended data
-            data = await self._fetch_data_with_retry(ticker_symbol, fetch_period)
+            # Fetch extended data with simpler method to avoid scipy issues
+            data = await self._fetch_data_simple(ticker_symbol, fetch_period)
             
             if data is None or data.empty:
                 return {
@@ -96,6 +95,56 @@ class TradingAnalyzer:
             traceback.print_exc()
             return {'success': False, 'error': str(e)}
     
+    async def _fetch_data_simple(self, ticker_symbol: str, yf_period: str) -> pd.DataFrame:
+        """Simple data fetch without complex parameters to avoid scipy dependency"""
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"Simple fetch attempt {attempt + 1}/{max_retries} for {ticker_symbol}")
+                
+                # Add delay between retries
+                if attempt > 0:
+                    await asyncio.sleep(attempt * 2)
+                
+                # Use Ticker object which is simpler
+                ticker = yf.Ticker(ticker_symbol)
+                
+                # Get history with minimal parameters and timeout
+                data = ticker.history(period=yf_period, interval="1d", timeout=10)
+                
+                if data is not None and not data.empty:
+                    print(f"✅ Simple fetch successful: {len(data)} rows")
+                    print(f"DEBUG: Data columns: {data.columns.tolist()}")
+                    print(f"DEBUG: Data sample:\n{data.head()}")
+                    return data
+                else:
+                    print(f"⚠️ No data returned for {ticker_symbol}")
+                    
+            except Exception as e:
+                print(f"Simple fetch attempt {attempt + 1} failed: {str(e)}")
+                
+                if attempt == max_retries - 1:
+                    print(f"❌ All simple fetch attempts failed for {ticker_symbol}")
+                    # Try one last time with different method
+                    try:
+                        # Use download without repair parameter
+                        data = yf.download(
+                            tickers=ticker_symbol,
+                            period=yf_period,
+                            interval="1d",
+                            progress=False,
+                            threads=False,
+                            timeout=10
+                        )
+                        if data is not None and not data.empty:
+                            print(f"✅ Fallback download successful: {len(data)} rows")
+                            return data
+                    except Exception as e2:
+                        print(f"Fallback download also failed: {e2}")
+        
+        return None
+    
     def _trim_to_period(self, data: pd.DataFrame, period: str) -> pd.DataFrame:
         """Trim data to requested period while keeping enough for indicator calculations"""
         # Define how many trading days to keep for each period
@@ -128,51 +177,6 @@ class TradingAnalyzer:
             return data.iloc[-days_to_keep:]
         else:
             return data
-    
-    async def _fetch_data_with_retry(self, ticker_symbol: str, yf_period: str) -> pd.DataFrame:
-        """Fetch data with multiple retries for extended timeframes"""
-        max_retries = 3
-        
-        for attempt in range(max_retries):
-            try:
-                print(f"Attempt {attempt + 1}/{max_retries} to fetch {ticker_symbol} for {yf_period}")
-                
-                # Add delay between retries
-                if attempt > 0:
-                    await asyncio.sleep(attempt * 2)
-                
-                # For longer periods, use yf.download with optimized parameters
-                data = yf.download(
-                    tickers=ticker_symbol,
-                    period=yf_period,
-                    interval="1d",
-                    progress=False,
-                    ignore_tz=True,
-                    prepost=False,
-                    repair=True,
-                    threads=False,
-                    auto_adjust=True
-                )
-                
-                if data is not None and not data.empty:
-                    print(f"✅ Successfully fetched {len(data)} rows for {ticker_symbol}")
-                    return data
-                
-            except Exception as e:
-                print(f"Attempt {attempt + 1} failed: {str(e)[:100]}...")
-                
-                if attempt == max_retries - 1:
-                    print(f"❌ All attempts failed for {ticker_symbol}")
-                    # Try one last time with different method
-                    try:
-                        ticker = yf.Ticker(ticker_symbol)
-                        data = ticker.history(period=yf_period, interval="1d")
-                        if data is not None and not data.empty:
-                            return data
-                    except:
-                        return None
-        
-        return None
     
     async def _get_ticker_info(self, ticker_symbol: str, data: pd.DataFrame) -> Dict:
         """Get ticker information with fallback"""
@@ -229,7 +233,7 @@ class TradingAnalyzer:
             # Use longer moving averages for long-term trends
             ma_periods = [20, 50, 100, 200]
         else:
-            ma_periods = self.config.MOVING_AVERAGES
+            ma_periods = [9, 20, 50]
         
         # Calculate moving averages with forward fill
         for ma in ma_periods:
@@ -241,18 +245,8 @@ class TradingAnalyzer:
                 except Exception as e:
                     print(f"Error calculating SMA_{ma}: {e}")
                     df[f'SMA_{ma}'] = np.nan
-                
-                # EMA for key periods
-                if ma in [9, 20, 50]:
-                    try:
-                        ema_indicator = ta.trend.EMAIndicator(df['Close'], window=ma)
-                        df[f'EMA_{ma}'] = ema_indicator.ema_indicator().ffill()
-                    except Exception as e:
-                        print(f"Error calculating EMA_{ma}: {e}")
-                        df[f'EMA_{ma}'] = np.nan
         
         # Calculate RSI (Relative Strength Index)
-        # For long timeframes, use standard 14-period RSI
         if len(df) >= self.config.RSI_PERIOD:
             try:
                 rsi_indicator = ta.momentum.RSIIndicator(df['Close'], window=self.config.RSI_PERIOD)
@@ -280,7 +274,6 @@ class TradingAnalyzer:
                 df['MACD_Hist'] = np.nan
         
         # Calculate Bollinger Bands with forward fill
-        # For long timeframes, use 20-period BB
         if len(df) >= self.config.BB_PERIOD:
             try:
                 bb_indicator = ta.volatility.BollingerBands(
@@ -316,59 +309,6 @@ class TradingAnalyzer:
             print(f"Error calculating volume indicators: {e}")
             df['Volume_MA'] = np.nan
             df['Volume_Ratio'] = np.nan
-        
-        # Calculate additional indicators for better analysis (especially for long timeframes)
-        try:
-            # Stochastic Oscillator
-            stoch_indicator = ta.momentum.StochasticOscillator(
-                high=df['High'],
-                low=df['Low'],
-                close=df['Close'],
-                window=14,
-                smooth_window=3
-            )
-            df['Stoch_%K'] = stoch_indicator.stoch().ffill()
-            df['Stoch_%D'] = stoch_indicator.stoch_signal().ffill()
-        except Exception as e:
-            print(f"Error calculating Stochastic: {e}")
-            df['Stoch_%K'] = np.nan
-            df['Stoch_%D'] = np.nan
-        
-        try:
-            # Average True Range (ATR) for volatility
-            atr_indicator = ta.volatility.AverageTrueRange(
-                high=df['High'],
-                low=df['Low'],
-                close=df['Close'],
-                window=14
-            )
-            df['ATR'] = atr_indicator.average_true_range().ffill()
-        except Exception as e:
-            print(f"Error calculating ATR: {e}")
-            df['ATR'] = np.nan
-        
-        try:
-            # On Balance Volume (OBV)
-            obv_indicator = ta.volume.OnBalanceVolumeIndicator(close=df['Close'], volume=df['Volume'])
-            df['OBV'] = obv_indicator.on_balance_volume().ffill()
-        except Exception as e:
-            print(f"Error calculating OBV: {e}")
-            df['OBV'] = np.nan
-        
-        # For long timeframes, calculate yearly moving averages
-        if period in ['2y', '3y', '5y']:
-            try:
-                # 200-day moving average (approx 10 months)
-                if len(df) >= 200:
-                    sma_200 = ta.trend.SMAIndicator(df['Close'], window=200)
-                    df['SMA_200'] = sma_200.sma_indicator().ffill()
-                
-                # 100-day moving average (approx 5 months)
-                if len(df) >= 100:
-                    sma_100 = ta.trend.SMAIndicator(df['Close'], window=100)
-                    df['SMA_100'] = sma_100.sma_indicator().ffill()
-            except Exception as e:
-                print(f"Error calculating long-term MAs: {e}")
         
         # Remove early rows with NaN values for cleaner charts
         # Find first non-NaN for all critical indicators

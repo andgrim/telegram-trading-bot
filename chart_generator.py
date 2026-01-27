@@ -52,6 +52,19 @@ class ChartGenerator:
         if len(data) < 10:
             raise ValueError(f"Not enough data points: {len(data)}")
         
+        print(f"DEBUG: Generating chart for {ticker}, period {period}")
+        print(f"DEBUG: Data shape: {data.shape}")
+        print(f"DEBUG: Data columns: {data.columns.tolist()}")
+        print(f"DEBUG: Data index type: {type(data.index)}")
+        print(f"DEBUG: First date: {data.index[0]}, Last date: {data.index[-1]}")
+        
+        # Verify required columns exist
+        required_cols = ['Close', 'High', 'Low', 'Open', 'Volume']
+        missing_cols = [col for col in required_cols if col not in data.columns]
+        if missing_cols:
+            print(f"WARNING: Missing columns: {missing_cols}")
+            # Try to continue with what we have
+        
         # Use appropriate number of periods based on timeframe
         # Trading days approximation: 252 days per year
         period_display_map = {
@@ -100,7 +113,7 @@ class ChartGenerator:
         else:
             # For short/medium timeframes
             ma_configs = [
-                (9, 'EMA_9', self.colors['ma_9'], '9 EMA', '--'),
+                (9, 'SMA_9', self.colors['ma_9'], '9 MA', '--'),
                 (20, 'SMA_20', self.colors['ma_20'], '20 MA', '-'),
                 (50, 'SMA_50', self.colors['ma_50'], '50 MA', '-'),
             ]
