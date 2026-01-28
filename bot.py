@@ -281,16 +281,6 @@ Or use: `/analyze TICKER PERIOD`
                     parse_mode=ParseMode.MARKDOWN
                 )
             
-            # Send technical overview
-            try:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=analysis['technical_overview'],
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            except:
-                pass
-            
         except Exception as e:
             logger.error(f"Analysis error: {e}")
             await context.bot.send_message(

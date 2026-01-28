@@ -69,11 +69,8 @@ class TradingAnalyzer:
             # Detect reversal patterns
             reversal_patterns = self._detect_reversal_patterns(data)
             
-            # Prepare analysis summary
+            # Prepare unified analysis summary
             summary = self._prepare_summary(ticker_symbol, data, info, fundamental, signals, reversal_patterns)
-            
-            # Prepare technical overview
-            tech_overview = self._prepare_technical_overview(data, reversal_patterns)
             
             print(f"✅ Analysis complete for {ticker_symbol}")
             
@@ -85,7 +82,6 @@ class TradingAnalyzer:
                 'signals': signals,
                 'reversal_patterns': reversal_patterns,
                 'summary': summary,
-                'technical_overview': tech_overview,
                 'requested_period': period
             }
             
@@ -658,35 +654,116 @@ class TradingAnalyzer:
     
     def _prepare_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
                         fundamental: Dict, signals: List, reversal_patterns: Dict) -> str:
-        """Prepare analysis summary"""
+        """Prepare unified analysis summary with all indicators and signals"""
         try:
             latest = data.iloc[-1]
-            
-            # Price information
             current_price = latest['Close']
             prev_close = data['Close'].iloc[-2] if len(data) > 1 else current_price
             price_change = ((current_price - prev_close) / prev_close * 100) if prev_close != 0 else 0
             
-            # Volume
+            # Volume analysis
             volume = latest['Volume']
             avg_volume = data['Volume'].tail(20).mean()
             volume_ratio = volume / avg_volume if avg_volume > 0 else 1
             
-            # Signal summary
-            bull_signals = len([s for s in signals if s['direction'] == 'BULLISH'])
-            bear_signals = len([s for s in signals if s['direction'] == 'BEARISH'])
-            
-            # For long timeframes, show yearly performance
+            # Yearly performance if available
             yearly_change = None
-            if len(data) > 252:  # More than 1 year of data
+            if len(data) > 252:
                 yearly_price = data['Close'].iloc[-252] if len(data) > 252 else data['Close'].iloc[0]
                 yearly_change = ((current_price - yearly_price) / yearly_price * 100) if yearly_price != 0 else 0
             
+            # Signal analysis
+            bull_signals = [s for s in signals if s['direction'] == 'BULLISH']
+            bear_signals = [s for s in signals if s['direction'] == 'BEARISH']
+            neutral_signals = [s for s in signals if s['direction'] == 'NEUTRAL']
+            
+            # Check for specific important signals
+            death_cross = any(s['type'] == 'DEATH_CROSS' for s in signals)
+            golden_cross = any(s['type'] == 'GOLDEN_CROSS' for s in signals)
+            rsi_oversold = any(s['type'] == 'RSI_OVERSOLD' for s in signals)
+            rsi_overbought = any(s['type'] == 'RSI_OVERBOUGHT' for s in signals)
+            
+            # Moving average analysis
+            ma_positions = []
+            if 'SMA_50' in data.columns and not pd.isna(latest['SMA_50']):
+                if current_price > latest['SMA_50']:
+                    ma_positions.append(f"ABOVE 50MA (${latest['SMA_50']:.2f})")
+                else:
+                    ma_positions.append(f"BELOW 50MA (${latest['SMA_50']:.2f})")
+            
+            if 'SMA_200' in data.columns and not pd.isna(latest['SMA_200']):
+                if current_price > latest['SMA_200']:
+                    ma_positions.append(f"ABOVE 200MA (${latest['SMA_200']:.2f})")
+                else:
+                    ma_positions.append(f"BELOW 200MA (${latest['SMA_200']:.2f})")
+            
+            # RSI analysis
+            rsi_analysis = ""
+            if 'RSI' in data.columns and not pd.isna(latest['RSI']):
+                rsi = latest['RSI']
+                if rsi < 30:
+                    rsi_analysis = f"RSI {rsi:.1f} - OVERSOLD 📉 (Potential bounce)"
+                elif rsi > 70:
+                    rsi_analysis = f"RSI {rsi:.1f} - OVERBOUGHT 📈 (Potential pullback)"
+                elif rsi < 50:
+                    rsi_analysis = f"RSI {rsi:.1f} - Weakness"
+                else:
+                    rsi_analysis = f"RSI {rsi:.1f} - Strength"
+            
+            # MACD analysis
+            macd_analysis = ""
+            if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
+                macd = latest['MACD']
+                signal = latest['MACD_Signal']
+                if not pd.isna(macd) and not pd.isna(signal):
+                    if macd > signal:
+                        macd_analysis = f"MACD {macd:.3f} > Signal {signal:.3f} - BULLISH 🟢"
+                    else:
+                        macd_analysis = f"MACD {macd:.3f} < Signal {signal:.3f} - BEARISH 🔴"
+            
+            # Bollinger Bands analysis
+            bb_analysis = ""
+            if 'BB_Upper' in data.columns and 'BB_Lower' in data.columns:
+                try:
+                    bb_position = (latest['Close'] - latest['BB_Lower']) / (latest['BB_Upper'] - latest['BB_Lower'])
+                    if not pd.isna(bb_position):
+                        if bb_position < 0.2:
+                            bb_analysis = f"BB Position: {bb_position*100:.1f}% - Near Lower Band (Oversold)"
+                        elif bb_position > 0.8:
+                            bb_analysis = f"BB Position: {bb_position*100:.1f}% - Near Upper Band (Overbought)"
+                        else:
+                            bb_analysis = f"BB Position: {bb_position*100:.1f}% - Neutral"
+                except:
+                    pass
+            
+            # Volume analysis text
+            volume_analysis = ""
+            if volume_ratio > 2.0:
+                volume_analysis = "HIGH VOLUME 🚨 (Strong interest)"
+            elif volume_ratio > 1.5:
+                volume_analysis = "Volume above average"
+            elif volume_ratio < 0.5:
+                volume_analysis = "Low volume"
+            else:
+                volume_analysis = "Normal volume"
+            
+            # Trend analysis
+            trend_analysis = ""
+            if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
+                sma20 = latest['SMA_20']
+                sma50 = latest['SMA_50']
+                if not pd.isna(sma20) and not pd.isna(sma50):
+                    if sma20 > sma50:
+                        trend_analysis = "Trend: BULLISH 🟢 (20MA > 50MA)"
+                    else:
+                        trend_analysis = "Trend: BEARISH 🔴 (20MA < 50MA)"
+            
+            # Prepare summary
             summary = f"""
-📊 **ANALYSIS: {ticker}**
+📊 **COMPREHENSIVE ANALYSIS: {ticker}**
 
-**Price Information:**
-• Current: ${current_price:.2f}
+**PRICE & VOLUME**
+• Current Price: ${current_price:.2f}
 • Daily Change: {price_change:+.2f}%
 """
             
@@ -694,223 +771,94 @@ class TradingAnalyzer:
                 summary += f"• Yearly Change: {yearly_change:+.2f}%\n"
             
             summary += f"""• Volume: {self._format_number(volume)} ({volume_ratio:.1f}x avg)
+• Volume Analysis: {volume_analysis}
 
-**Key Technical Levels:**
+**TREND & MOVING AVERAGES**
+• {trend_analysis}
 """
             
-            # Add moving averages (show more for long timeframes)
-            ma_periods = [9, 20, 50]
-            if 'SMA_100' in data.columns:
-                ma_periods.append(100)
-            if 'SMA_200' in data.columns:
-                ma_periods.append(200)
+            for position in ma_positions:
+                summary += f"• Position: {position}\n"
             
-            for ma in ma_periods:
-                ma_col = f'SMA_{ma}'
-                if ma_col in data.columns:
-                    ma_val = latest[ma_col]
-                    if not pd.isna(ma_val):
-                        relation = "ABOVE" if current_price > ma_val else "BELOW"
-                        distance_pct = abs(current_price - ma_val) / ma_val * 100 if ma_val != 0 else 0
-                        summary += f"• {ma}MA: ${ma_val:.2f} ({relation}, {distance_pct:.1f}%)\n"
-            
-            # Add RSI
-            if 'RSI' in data.columns:
-                rsi_val = latest['RSI']
-                if not pd.isna(rsi_val):
-                    rsi_status = 'OVERSOLD' if rsi_val < 30 else 'OVERBOUGHT' if rsi_val > 70 else 'NEUTRAL'
-                    summary += f"• RSI: {rsi_val:.1f} ({rsi_status})\n"
-            
-            # Add MACD
-            if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
-                macd_val = latest['MACD']
-                signal_val = latest['MACD_Signal']
-                if not pd.isna(macd_val) and not pd.isna(signal_val):
-                    macd_dir = '🟢 BULLISH' if macd_val > signal_val else '🔴 BEARISH'
-                    summary += f"• MACD: {macd_dir}\n"
-            
-            # Add Bollinger Bands position
-            if 'BB_Upper' in data.columns and 'BB_Lower' in data.columns:
-                try:
-                    bb_position = (latest['Close'] - latest['BB_Lower']) / (latest['BB_Upper'] - latest['BB_Lower'])
-                    if not pd.isna(bb_position):
-                        summary += f"• BB Position: {bb_position*100:.1f}%\n"
-                except:
-                    pass
-            
-            # Add reversal patterns if detected
-            if reversal_patterns['bullish_reversal'] or reversal_patterns['bearish_reversal']:
-                summary += "\n**⚠️ REVERSAL PATTERN DETECTED ⚠️**\n"
-                
-                if reversal_patterns['bullish_reversal']:
-                    summary += "• Type: 🟢 BULLISH REVERSAL\n"
-                    summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
-                    if reversal_patterns['signals']:
-                        summary += "• Signals:\n"
-                        for signal in reversal_patterns['signals'][:5]:
-                            summary += f"  ◦ {signal}\n"
-                
-                if reversal_patterns['bearish_reversal']:
-                    summary += "• Type: 🔴 BEARISH REVERSAL\n"
-                    summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
+            if death_cross:
+                summary += "• ⚠️ DEATH CROSS DETECTED (Strong BEARISH signal)\n"
+            if golden_cross:
+                summary += "• ✅ GOLDEN CROSS DETECTED (Strong BULLISH signal)\n"
             
             summary += f"""
-**Technical Signals:** {len(signals)} total
-• Bullish: {bull_signals} • Bearish: {bear_signals}
+**TECHNICAL INDICATORS**
+• {rsi_analysis}
+• {macd_analysis}
+"""
+            
+            if bb_analysis:
+                summary += f"• {bb_analysis}\n"
+            
+            # A/D Line analysis
+            if 'AD_Line' in data.columns and len(data) > 1:
+                ad_current = latest['AD_Line']
+                ad_prev = data['AD_Line'].iloc[-2]
+                if not pd.isna(ad_current) and not pd.isna(ad_prev):
+                    if ad_current > ad_prev:
+                        summary += "• A/D Line: ACCUMULATION 🟢\n"
+                    else:
+                        summary += "• A/D Line: DISTRIBUTION 🔴\n"
+            
+            # Reversal patterns
+            if reversal_patterns['bullish_reversal']:
+                summary += f"\n⚠️ **BULLISH REVERSAL PATTERN** ⚠️\n"
+                summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
+                if reversal_patterns['signals']:
+                    summary += "• Signals:\n"
+                    for signal in reversal_patterns['signals'][:3]:
+                        summary += f"  - {signal}\n"
+            
+            if reversal_patterns['bearish_reversal']:
+                summary += f"\n⚠️ **BEARISH REVERSAL PATTERN** ⚠️\n"
+                summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
+                if reversal_patterns['signals']:
+                    summary += "• Signals:\n"
+                    for signal in reversal_patterns['signals'][:3]:
+                        summary += f"  - {signal}\n"
+            
+            # Signal summary
+            summary += f"""
+**TECHNICAL SIGNALS ({len(signals)} total)**
+• Bullish: {len(bull_signals)} 🟢
+• Bearish: {len(bear_signals)} 🔴
+• Neutral: {len(neutral_signals)} ⚪
 
-**Fundamental Score:** {fundamental['score']}/100
+**FUNDAMENTAL SCORE**: {fundamental['score']}/100
 """
             
             # Overall sentiment
             if reversal_patterns['bullish_reversal']:
-                sentiment = '🟢 STRONG BULLISH REVERSAL'
+                sentiment = '🟢 STRONG BULLISH (Reversal in progress)'
             elif reversal_patterns['bearish_reversal']:
-                sentiment = '🔴 STRONG BEARISH REVERSAL'
-            elif bull_signals > bear_signals:
+                sentiment = '🔴 STRONG BEARISH (Reversal in progress)'
+            elif len(bull_signals) > len(bear_signals):
                 sentiment = '🟢 BULLISH'
-            elif bear_signals > bull_signals:
+            elif len(bear_signals) > len(bull_signals):
                 sentiment = '🔴 BEARISH'
             else:
                 sentiment = '⚪ NEUTRAL'
             
-            summary += f"**Overall Sentiment:** {sentiment}"
+            summary += f"**OVERALL SENTIMENT**: {sentiment}"
+            
+            # Add key levels
+            summary += f"\n\n**KEY LEVELS**"
+            for ma in [9, 20, 50, 100, 200]:
+                ma_col = f'SMA_{ma}'
+                if ma_col in data.columns and not pd.isna(latest[ma_col]):
+                    distance_pct = abs(current_price - latest[ma_col]) / latest[ma_col] * 100
+                    direction = "above" if current_price > latest[ma_col] else "below"
+                    summary += f"\n• {ma}MA: ${latest[ma_col]:.2f} ({direction}, {distance_pct:.1f}%)"
             
             return summary
             
         except Exception as e:
             print(f"Error preparing summary: {e}")
             return f"**ANALYSIS: {ticker}**\n\nError preparing analysis summary."
-    
-    def _prepare_technical_overview(self, data: pd.DataFrame, reversal_patterns: Dict) -> str:
-        """Prepare detailed technical overview"""
-        try:
-            latest = data.iloc[-1]
-            
-            overview = "📈 **TECHNICAL OVERVIEW**\n\n"
-            
-            # Trend Analysis
-            overview += "**Trend Analysis:**\n"
-            
-            if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
-                sma20 = latest['SMA_20']
-                sma50 = latest['SMA_50']
-                close = latest['Close']
-                
-                if not pd.isna(sma20) and not pd.isna(sma50):
-                    # Check MA alignment
-                    if sma20 > sma50:
-                        overview += "• MA Alignment: 🟢 BULLISH (20 > 50)\n"
-                    elif sma20 < sma50:
-                        overview += "• MA Alignment: 🔴 BEARISH (20 < 50)\n"
-                    else:
-                        overview += "• MA Alignment: ⚪ NEUTRAL\n"
-                    
-                    # Price vs MAs
-                    above_count = sum([close > sma20, close > sma50])
-                    overview += f"• Price above {above_count}/2 MAs\n"
-            
-            # Long-term trend analysis for extended timeframes
-            if 'SMA_200' in data.columns:
-                sma200 = latest['SMA_200']
-                close = latest['Close']
-                if not pd.isna(sma200):
-                    if close > sma200:
-                        overview += "• Long-term Trend: 🟢 ABOVE 200MA (Bullish)\n"
-                    else:
-                        overview += "• Long-term Trend: 🔴 BELOW 200MA (Bearish)\n"
-            
-            # Momentum Indicators
-            overview += "\n**Momentum Indicators:**\n"
-            
-            if 'RSI' in data.columns:
-                rsi = latest['RSI']
-                if not pd.isna(rsi):
-                    if rsi < 30:
-                        rsi_status = '🟢 OVERSOLD (Bullish reversal likely)'
-                    elif rsi < 40:
-                        rsi_status = '🟡 NEAR OVERSOLD'
-                    elif rsi > 70:
-                        rsi_status = '🔴 OVERBOUGHT (Bearish reversal likely)'
-                    elif rsi > 60:
-                        rsi_status = '🟠 NEAR OVERBOUGHT'
-                    else:
-                        rsi_status = '⚪ NEUTRAL'
-                    
-                    overview += f"• RSI: {rsi:.1f} - {rsi_status}\n"
-            
-            if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
-                macd = latest['MACD']
-                signal = latest['MACD_Signal']
-                if not pd.isna(macd) and not pd.isna(signal):
-                    diff = macd - signal
-                    overview += f"• MACD vs Signal: {diff:.3f}\n"
-                    if diff > 0:
-                        overview += "  → 🟢 BULLISH MOMENTUM\n"
-                    else:
-                        overview += "  → 🔴 BEARISH MOMENTUM\n"
-                    
-                    # Check histogram trend
-                    if 'MACD_Hist' in data.columns and len(data) > 3:
-                        hist_values = data['MACD_Hist'].tail(3).values
-                        if all(not pd.isna(h) and h < 0 for h in hist_values) and hist_values[-1] > hist_values[0]:
-                            overview += "  → 📈 Histogram shrinking (potential reversal)\n"
-            
-            # Volume Analysis
-            overview += "\n**Volume Analysis:**\n"
-            
-            if 'Volume_Ratio' in data.columns:
-                volume_ratio = latest['Volume_Ratio']
-                if not pd.isna(volume_ratio):
-                    overview += f"• Volume Ratio: {volume_ratio:.1f}x 20-day average\n"
-                    if volume_ratio > 1.5:
-                        overview += "  → 📈 HIGH VOLUME ACTIVITY\n"
-            
-            if 'AD_Line' in data.columns and len(data) > 1:
-                ad_current = latest['AD_Line']
-                ad_prev = data['AD_Line'].iloc[-2]
-                if not pd.isna(ad_current) and not pd.isna(ad_prev):
-                    ad_trend = "🟢 ACCUMULATION" if ad_current > ad_prev else "🔴 DISTRIBUTION"
-                    overview += f"• A/D Line Trend: {ad_trend}\n"
-            
-            # Bollinger Bands Analysis
-            if 'BB_Upper' in data.columns and 'BB_Lower' in data.columns:
-                bb_upper = latest['BB_Upper']
-                bb_lower = latest['BB_Lower']
-                close = latest['Close']
-                
-                if not pd.isna(bb_upper) and not pd.isna(bb_lower):
-                    try:
-                        bb_position = (close - bb_lower) / (bb_upper - bb_lower)
-                        bb_width = (bb_upper - bb_lower) / close * 100
-                        
-                        overview += f"\n**Bollinger Bands:**\n"
-                        overview += f"• Position: {bb_position*100:.1f}%\n"
-                        overview += f"• Width: {bb_width:.1f}% of price\n"
-                        
-                        if bb_position < 0.1:
-                            overview += "  → 📉 PRICE NEAR LOWER BAND (Potential bounce)\n"
-                        elif bb_position > 0.9:
-                            overview += "  → 📈 PRICE NEAR UPPER BAND (Potential pullback)\n"
-                    except:
-                        pass
-            
-            # Reversal Pattern Details
-            if reversal_patterns['bullish_reversal'] or reversal_patterns['bearish_reversal']:
-                overview += "\n**⚠️ REVERSAL PATTERN ANALYSIS ⚠️**\n"
-                
-                if reversal_patterns['bullish_reversal']:
-                    overview += "• Pattern: BULLISH REVERSAL\n"
-                    overview += f"• Confidence: {reversal_patterns['confidence']}%\n"
-                
-                if reversal_patterns['bearish_reversal']:
-                    overview += "• Pattern: BEARISH REVERSAL\n"
-                    overview += f"• Confidence: {reversal_patterns['confidence']}%\n"
-            
-            return overview
-            
-        except Exception as e:
-            print(f"Error preparing technical overview: {e}")
-            return "📈 **TECHNICAL OVERVIEW**\n\nError preparing technical overview."
     
     def _format_number(self, num: float) -> str:
         """Format large numbers with K, M, B suffixes"""
