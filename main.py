@@ -39,11 +39,16 @@ if IS_RENDER:
     def run_flask_server():
         """Run Flask server on Render-provided port"""
         port = int(os.environ.get("PORT", 10000))
+        print(f"🌐 Starting Flask server on port {port}")
         app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 def run_telegram_bot():
     """Run your Telegram bot logic"""
     print("🤖 Starting Telegram Bot...")
+    print("⚠️  Note: Using rate limiting for Yahoo Finance API")
+    print("📊 Recommended tickers: AAPL, MSFT, SPY, GOLD, BTC")
+    print("⏱️  Delay between requests: 2 seconds")
+    
     try:
         from bot import TradingBot
         bot = TradingBot()

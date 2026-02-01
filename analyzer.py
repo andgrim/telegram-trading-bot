@@ -6,6 +6,8 @@ import warnings
 import asyncio
 import os
 from datetime import datetime, timedelta
+import time
+import cachetools
 
 warnings.filterwarnings('ignore')
 
@@ -14,77 +16,88 @@ import ta
 
 from config import CONFIG
 
+# Cache for ticker data (to reduce API calls)
+ticker_cache = cachetools.TTLCache(maxsize=100, ttl=CONFIG.CACHE_TTL)
+
 class TradingAnalyzer:
     """Comprehensive analyzer for technical analysis with extended timeframes and international markets"""
     
     def __init__(self):
         self.config = CONFIG
+        self._request_count = 0
+        self._last_request_time = time.time()
+    
+    def _rate_limit(self):
+        """Implement rate limiting for Yahoo Finance API"""
+        current_time = time.time()
+        time_since_last = current_time - self._last_request_time
+        
+        if self.config.YAHOO_RATE_LIMIT:
+            # Enforce minimum delay between requests
+            min_delay = self.config.YAHOO_DELAY_SECONDS
+            if time_since_last < min_delay:
+                sleep_time = min_delay - time_since_last
+                time.sleep(sleep_time)
+        
+        self._last_request_time = time.time()
     
     async def analyze_ticker(self, ticker_symbol: str, period: str = '1y') -> Dict:
         """Perform comprehensive analysis with complete indicators for all timeframes"""
         try:
             print(f"🔍 Starting analysis for {ticker_symbol} ({period})")
             
-            # Map period to yfinance format with extended data for complete indicators
+            # Map period to yfinance format
             yf_period_map = {
-                '3m': '6mo',    # Get 6 months data for 3m analysis
-                '6m': '1y',     # Get 1 year data for 6m analysis
-                '1y': '2y',     # Get 2 years data for 1y analysis
-                '2y': '3y',     # Get 3 years data for 2y analysis
-                '3y': '5y',     # Get 5 years data for 3y analysis
-                '5y': '6y'      # Get 6 years data for 5y analysis
+                '3m': '3mo',    # Reduced from 6mo to 3mo
+                '6m': '6mo',    # Reduced from 1y to 6mo
+                '1y': '1y',     # Reduced from 2y to 1y
+                '2y': '2y',     # Reduced from 3y to 2y
+                '3y': '3y',     # Reduced from 5y to 3y
+                '5y': '5y'      # Keep 5y
             }
             
-            fetch_period = yf_period_map.get(period, '1y')  # Default to 1y
+            fetch_period = yf_period_map.get(period, '1y')
             
             # Handle ticker formatting for yfinance
             formatted_ticker = self._format_ticker_for_yfinance(ticker_symbol)
             print(f"Formatted ticker: {ticker_symbol} -> {formatted_ticker}")
             
-            # Validate ticker exists before fetching
-            try:
-                ticker_obj = yf.Ticker(formatted_ticker)
-                test_info = ticker_obj.info
-                if not test_info or 'symbol' not in test_info:
-                    print(f"Warning: Ticker {formatted_ticker} may not exist")
-            except Exception as val_err:
-                print(f"Ticker validation warning: {val_err}")
-            
-            # Fetch data
-            data = await self._fetch_data_with_retry(formatted_ticker, fetch_period)
-            
-            if data is None or data.empty:
-                # Try alternative formatting
-                print(f"First attempt failed, trying alternative format for {ticker_symbol}")
-                
-                # For European stocks, try different formats
-                european_tickers = self._get_european_ticker_variants(ticker_symbol)
-                for alt_ticker in european_tickers[:3]:  # Limit to 3 alternatives
-                    print(f"Trying alternative: {alt_ticker}")
-                    data = await self._fetch_data_with_retry(alt_ticker, fetch_period)
-                    if data is not None and not data.empty:
-                        formatted_ticker = alt_ticker
-                        print(f"✅ Found data with alternative ticker: {alt_ticker}")
-                        break
+            # Check cache first
+            cache_key = f"{formatted_ticker}_{fetch_period}"
+            if cache_key in ticker_cache:
+                print(f"✅ Using cached data for {formatted_ticker}")
+                data = ticker_cache[cache_key]
+            else:
+                # Fetch data with rate limiting
+                data = await self._fetch_data_with_retry(formatted_ticker, fetch_period)
                 
                 if data is None or data.empty:
-                    return {
-                        'success': False, 
-                        'error': f'No data found for {ticker_symbol}. Please check:\n• Yahoo Finance format: ISP.MI, AI.PA, ADS.DE\n• Verify existence: https://finance.yahoo.com/quote/{formatted_ticker}\n• Try US stocks: AAPL, TSLA, MSFT'
-                    }
+                    # Try without suffix for US stocks
+                    if '.' in formatted_ticker:
+                        print(f"Trying without suffix: {ticker_symbol}")
+                        data = await self._fetch_data_with_retry(ticker_symbol, fetch_period)
+                    
+                    if data is None or data.empty:
+                        return {
+                            'success': False, 
+                            'error': f'No data found for {ticker_symbol}. Try US stocks (AAPL, TSLA) or major indices (SPX, GOLD).'
+                        }
+                
+                # Cache the data
+                ticker_cache[cache_key] = data
             
             print(f"✅ Data fetched: {len(data)} rows")
             
             # Flatten MultiIndex columns
             data = self._flatten_dataframe(data)
             
-            # Trim data to requested period while keeping enough for indicators
+            # Trim data to requested period
             data = self._trim_to_period(data, period)
             
             # Get ticker info
             info = await self._get_ticker_info(formatted_ticker, data, ticker_symbol)
             
-            # Calculate COMPLETE technical indicators (including A/D)
+            # Calculate technical indicators
             data = self._calculate_complete_indicators(data, period)
             
             # Get fundamental analysis
@@ -96,10 +109,8 @@ class TradingAnalyzer:
             # Detect reversal patterns
             reversal_patterns = self._detect_reversal_patterns(data)
             
-            # Prepare unified analysis summary
+            # Prepare summaries
             summary = self._prepare_summary(ticker_symbol, data, info, fundamental, signals, reversal_patterns)
-            
-            # Prepare compact summary for photo caption
             compact_summary = self._prepare_compact_summary(ticker_symbol, data, info, fundamental, signals, reversal_patterns)
             
             print(f"✅ Analysis complete for {ticker_symbol}")
@@ -122,95 +133,112 @@ class TradingAnalyzer:
             traceback.print_exc()
             return {'success': False, 'error': str(e)}
     
+    async def _fetch_data_with_retry(self, ticker_symbol: str, yf_period: str, max_retries: int = None) -> pd.DataFrame:
+        """Fetch data with improved rate limiting and error handling"""
+        if max_retries is None:
+            max_retries = self.config.YAHOO_MAX_RETRIES
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"📥 Fetch attempt {attempt + 1}/{max_retries} for {ticker_symbol}")
+                
+                # Apply rate limiting
+                self._rate_limit()
+                
+                # Try direct download (simplified approach)
+                try:
+                    data = yf.download(
+                        tickers=ticker_symbol,
+                        period=yf_period,
+                        interval="1d",
+                        progress=False,
+                        threads=False,  # Single thread to reduce rate limiting
+                        timeout=self.config.YAHOO_TIMEOUT,
+                        auto_adjust=True,
+                        ignore_tz=True,
+                        prepost=False,
+                        show_errors=False  # Suppress error messages
+                    )
+                    
+                    if data is not None and not data.empty:
+                        print(f"✅ Download successful: {len(data)} rows")
+                        return data
+                    
+                except Exception as e:
+                    if "429" in str(e) or "Too Many Requests" in str(e):
+                        print(f"⚠️ Rate limited, waiting {self.config.YAHOO_DELAY_SECONDS * 2} seconds...")
+                        await asyncio.sleep(self.config.YAHOO_DELAY_SECONDS * 2)
+                        continue
+                    print(f"Download error: {str(e)[:100]}")
+                
+                # Try with Ticker object as fallback
+                if attempt == max_retries - 1:
+                    try:
+                        print(f"Trying Ticker.history() as fallback...")
+                        self._rate_limit()
+                        
+                        ticker = yf.Ticker(ticker_symbol)
+                        data = ticker.history(
+                            period=yf_period,
+                            interval="1d",
+                            timeout=self.config.YAHOO_TIMEOUT
+                        )
+                        
+                        if data is not None and not data.empty:
+                            print(f"✅ Ticker.history successful: {len(data)} rows")
+                            return data
+                    except Exception as e2:
+                        print(f"Ticker.history failed: {str(e2)[:100]}")
+                
+                # Wait before next attempt
+                if attempt < max_retries - 1:
+                    wait_time = self.config.YAHOO_DELAY_SECONDS * (attempt + 1)
+                    print(f"Waiting {wait_time} seconds before next attempt...")
+                    await asyncio.sleep(wait_time)
+                
+            except Exception as e:
+                print(f"Fetch attempt {attempt + 1} failed: {str(e)[:100]}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(self.config.YAHOO_DELAY_SECONDS)
+        
+        print(f"❌ All fetch attempts failed for {ticker_symbol}")
+        return None
+    
     def _format_ticker_for_yfinance(self, ticker_symbol: str) -> str:
-        """Format ticker symbol for yfinance library"""
+        """Format ticker symbol for yfinance library - SIMPLIFIED"""
         ticker = ticker_symbol.strip().upper()
         
-        # Common European exchanges and their Yahoo Finance formats
-        european_mapping = {
-            # Italy (.MI = Milan)
-            'ISP': 'ISP.MI',
-            'ENEL': 'ENEL.MI',
-            'ENI': 'ENI.MI',
-            'UCG': 'UCG.MI',  # Unicredit
-            'G': 'G.MI',      # Assicurazioni Generali
-            'GUAL': 'G.MI',   # Alternative for Generali
-            'TIT': 'TIT.MI',  # Telecom Italia
-            'STM': 'STM.MI',  # STMicroelectronics
-            'DIA': 'DIA.MI',  # DiaSorin
-            'SRG': 'SRG.MI',  # Snam
-            'REC': 'REC.MI',  # Recordati
-            
-            # Germany (.DE = Frankfurt)
-            'ADS': 'ADS.DE',  # Adidas
-            'ALV': 'ALV.DE',  # Allianz
-            'BAS': 'BAS.DE',  # BASF
-            'BAYN': 'BAYN.DE',  # Bayer
-            'BMW': 'BMW.DE',
-            'DAI': 'DAI.DE',  # Daimler/Mercedes
-            'DB1': 'DB1.DE',  # Deutsche Börse
-            'DPW': 'DPW.DE',  # Deutsche Post
-            'DTE': 'DTE.DE',  # Deutsche Telekom
-            
-            # Netherlands (.AS = Amsterdam)
-            'ADYEN': 'ADYEN.AS',
-            'AD': 'AD.AS',  # Ahold Delhaize
-            'ASML': 'ASML.AS',
-            
-            # France (.PA = Paris)
-            'AI': 'AI.PA',  # Air Liquide
-            'AIR': 'AIR.PA',  # Airbus
-            'BNP': 'BNP.PA',  # BNP Paribas
-            'CS': 'CS.PA',  # AXA
-            'EL': 'EL.PA',  # EssilorLuxottica
-            'ENGI': 'ENGI.PA',
-            'BN': 'BN.PA',  # Danone
-            
-            # Spain (.MC = Madrid)
-            'AMS': 'AMS.MC',  # Amadeus
-            
-            # Belgium (.BR = Brussels)
-            'ABI': 'ABI.BR',  # Anheuser-Busch InBev
-            
-            # Ireland (.IR = Dublin)
-            'CRG': 'CRG.IR',  # CRH
-        }
+        # Remove common prefixes
+        if ticker.startswith('$'):
+            ticker = ticker[1:]
         
-        # Check if we have a mapping for this ticker
-        if ticker in european_mapping:
-            return european_mapping[ticker]
-        
-        # If it already has a dot, keep it as is
-        if '.' in ticker:
-            return ticker
-        
-        # Map common indices and commodities
+        # Only map common indices and commodities (not individual stocks)
         special_mapping = {
             # US Indices
-            'SPX': '^GSPC',        # S&P 500
-            'DJI': '^DJI',         # Dow Jones
-            'IXIC': '^IXIC',       # NASDAQ
-            'RUT': '^RUT',         # Russell 2000
-            'VIX': '^VIX',         # VIX
+            'SPX': '^GSPC',
+            'SPY': 'SPY',  # S&P 500 ETF
+            'DJI': '^DJI',
+            'IXIC': '^IXIC',
+            'QQQ': 'QQQ',  # NASDAQ ETF
+            'VIX': '^VIX',
             
             # European Indices
-            'DAX': '^GDAXI',       # German DAX
-            'CAC': '^FCHI',        # French CAC 40
-            'FTSE': '^FTSE',       # UK FTSE 100
-            'IBEX': '^IBEX',       # Spanish IBEX 35
-            'FTMIB': 'FTSEMIB.MI', # Italian FTSE MIB
+            'DAX': '^GDAXI',
+            'CAC': '^FCHI',
+            'FTSE': '^FTSE',
+            'IBEX': '^IBEX',
             
             # Asian Indices
-            'N225': '^N225',       # Nikkei 225
-            'HSI': '^HSI',         # Hang Seng
+            'N225': '^N225',
+            'HSI': '^HSI',
             
             # Commodities
-            'GOLD': 'GC=F',        # Gold Futures
-            'SILVER': 'SI=F',      # Silver Futures
-            'OIL': 'CL=F',         # Crude Oil WTI
-            'BRENT': 'BZ=F',       # Brent Crude
-            'NATGAS': 'NG=F',      # Natural Gas
-            'COPPER': 'HG=F',      # Copper
+            'GOLD': 'GC=F',
+            'SILVER': 'SI=F',
+            'OIL': 'CL=F',
+            'BRENT': 'BZ=F',
+            'NATGAS': 'NG=F',
+            'COPPER': 'HG=F',
             
             # Currency pairs
             'EURUSD': 'EURUSD=X',
@@ -221,36 +249,31 @@ class TradingAnalyzer:
             'BTC': 'BTC-USD',
             'ETH': 'ETH-USD',
             'XRP': 'XRP-USD',
+            'DOGE': 'DOGE-USD',
+            
+            # Popular ETFs
+            'VOO': 'VOO',  # Vanguard S&P 500
+            'VTI': 'VTI',  # Vanguard Total Stock Market
+            'BND': 'BND',  # Vanguard Total Bond Market
         }
         
         if ticker in special_mapping:
             return special_mapping[ticker]
         
+        # For individual stocks, keep as is (let yfinance handle it)
         return ticker
     
     def _get_european_ticker_variants(self, ticker_symbol: str) -> List[str]:
-        """Generate alternative ticker formats for European stocks"""
+        """Generate alternative ticker formats - LIMITED"""
         ticker = ticker_symbol.strip().upper()
         variants = []
         
-        # If already has exchange suffix, keep it
-        if '.' in ticker:
+        # Only try 2 alternatives to reduce API calls
+        if '.' not in ticker:
+            variants.append(f"{ticker}.MI")  # Italian
+            variants.append(f"{ticker}.PA")  # French
+        else:
             variants.append(ticker)
-        
-        # Try common European exchanges
-        exchanges = ['.MI', '.DE', '.AS', '.PA', '.BR', '.IR', '.MC', '.SW', '.L', '.T', '.HK']
-        
-        for exchange in exchanges:
-            variants.append(f"{ticker}{exchange}")
-        
-        # Also try without dot
-        variants.append(ticker.replace('.', ''))
-        
-        # Try Yahoo Finance alternative formats
-        if '.' in ticker:
-            base, exchange = ticker.split('.')
-            variants.append(f"{base}-{exchange}")  # ISP-MI
-            variants.append(f"{base}.{exchange.lower()}")  # ISP.mi
         
         return variants
     
