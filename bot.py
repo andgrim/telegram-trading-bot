@@ -105,11 +105,20 @@ Due to API rate limits on free tier, please use:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text(
-            welcome_message,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
-        )
+        if update.callback_query:
+            # For callback queries, edit the existing message
+            await update.callback_query.message.edit_text(
+                welcome_message,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            # For regular commands, send new message
+            await update.message.reply_text(
+                welcome_message,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
     
     async def show_recommended(self, update: Update, context: ContextTypes.DEFAULT_TYPE, category: str):
         """Show recommended tickers that work well"""
@@ -228,7 +237,7 @@ Due to API rate limits on free tier, please use:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         if update.callback_query:
-            await update.callback_query.message.reply_text(
+            await update.callback_query.message.edit_text(
                 text=help_message,
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.MARKDOWN
@@ -311,8 +320,8 @@ Due to rate limits, please use:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         if update.callback_query:
-            await update.callback_query.message.reply_text(
-                message,
+            await update.callback_query.message.edit_text(
+                text=message,
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.MARKDOWN
             )
@@ -323,15 +332,52 @@ Due to rate limits, please use:
                 parse_mode=ParseMode.MARKDOWN
             )
     
+    async def ask_for_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str):
+        """Ask user to select timeframe for a ticker"""
+        # Determine which message to reply to
+        if update.callback_query:
+            # For callback queries, reply to the query's message
+            message_obj = update.callback_query.message
+        else:
+            # For regular messages, use update.message
+            message_obj = update.message
+        
+        message_text = f"📊 **Select timeframe for {ticker}**\n\n"
+        message_text += "Choose analysis period:"
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("3 Months", callback_data=f"analyze_{ticker}_3m"),
+                InlineKeyboardButton("6 Months", callback_data=f"analyze_{ticker}_6m")
+            ],
+            [
+                InlineKeyboardButton("1 Year", callback_data=f"analyze_{ticker}_1y"),
+                InlineKeyboardButton("2 Years", callback_data=f"analyze_{ticker}_2y")
+            ],
+            [InlineKeyboardButton("⬅️ Back", callback_data="ask_ticker")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await message_obj.reply_text(
+            message_text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN
+        )
+    
     async def perform_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE, 
                              ticker: str, period: str):
         """Perform analysis with improved error handling"""
-        user_id = update.effective_user.id
+        # Determine chat ID
+        if update.callback_query:
+            chat_id = update.callback_query.message.chat_id
+        else:
+            chat_id = update.effective_chat.id
         
         # Send typing indicator
         try:
             await context.bot.send_chat_action(
-                chat_id=update.effective_chat.id,
+                chat_id=chat_id,
                 action=ChatAction.TYPING
             )
         except:
@@ -349,7 +395,7 @@ Due to rate limits, please use:
             status_text += "\n⚠️ This ticker may not work due to rate limits"
         
         status_msg = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text=status_text + "\nPlease wait...",
             parse_mode=ParseMode.MARKDOWN
         )
@@ -372,7 +418,7 @@ Due to rate limits, please use:
                 error_msg += "**Command:** `/analyze AAPL 1y`"
                 
                 await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
+                    chat_id=chat_id,
                     text=error_msg,
                     parse_mode=ParseMode.MARKDOWN
                 )
@@ -414,7 +460,7 @@ Due to rate limits, please use:
                             caption = caption[:1020] + "..."
                         
                         await context.bot.send_photo(
-                            chat_id=update.effective_chat.id,
+                            chat_id=chat_id,
                             photo=chart_file,
                             caption=caption,
                             reply_markup=reply_markup,
@@ -423,13 +469,13 @@ Due to rate limits, please use:
                         
                         # Send full analysis
                         await self._send_comprehensive_analysis(
-                            context, update.effective_chat.id, analysis
+                            context, chat_id, analysis
                         )
                         
                 except Exception as e:
                     logger.error(f"Photo send error: {e}")
                     await self._send_comprehensive_analysis(
-                        context, update.effective_chat.id, analysis
+                        context, chat_id, analysis
                     )
                 finally:
                     try:
@@ -445,7 +491,7 @@ Due to rate limits, please use:
                     analysis_text += "\n\n⚠️ *Chart generation skipped due to rate limits*"
                 
                 await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
+                    chat_id=chat_id,
                     text=analysis_text,
                     reply_markup=reply_markup,
                     parse_mode=ParseMode.MARKDOWN
@@ -462,7 +508,7 @@ Due to rate limits, please use:
             error_text += "**Recommended:** AAPL, MSFT, SPY, GOLD, BTC"
             
             await context.bot.send_message(
-                chat_id=update.effective_chat.id,
+                chat_id=chat_id,
                 text=error_text,
                 parse_mode=ParseMode.MARKDOWN
             )
@@ -474,8 +520,81 @@ Due to rate limits, please use:
             except:
                 pass
     
+    async def _send_comprehensive_analysis(self, context: ContextTypes.DEFAULT_TYPE, 
+                                         chat_id: int, analysis: Dict):
+        """Send the comprehensive analysis in one or more messages"""
+        try:
+            analysis_text = analysis['summary']
+            
+            # Telegram has a 4096 character limit per message
+            # Split if needed
+            if len(analysis_text) <= 4096:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=analysis_text,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            else:
+                # Split the analysis into multiple parts
+                parts = self._split_long_message(analysis_text)
+                for i, part in enumerate(parts):
+                    # Add part indicator
+                    if len(parts) > 1:
+                        part_text = f"**📊 Analysis Part {i+1}/{len(parts)}**\n\n{part}"
+                    else:
+                        part_text = part
+                    
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=part_text,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    await asyncio.sleep(0.5)  # Small delay between messages
+                    
+        except Exception as e:
+            logger.error(f"Error sending comprehensive analysis: {e}")
+            # Send a simplified version
+            simplified = "📊 **Analysis Complete**\n\n"
+            simplified += "Comprehensive analysis generated. Full details may be truncated.\n"
+            simplified += f"• Signals: {len(analysis['signals'])} total\n"
+            simplified += f"• Fundamental Score: {analysis['fundamental']['score']}/100\n"
+            
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=simplified,
+                parse_mode=ParseMode.MARKDOWN
+            )
+    
+    def _split_long_message(self, text: str, max_length: int = 4000) -> List[str]:
+        """Split a long message into multiple parts"""
+        parts = []
+        
+        # Try to split at meaningful boundaries
+        lines = text.split('\n')
+        current_part = []
+        current_length = 0
+        
+        for line in lines:
+            line_length = len(line) + 1  # +1 for newline
+            
+            if current_length + line_length > max_length:
+                # Start new part
+                if current_part:
+                    parts.append('\n'.join(current_part))
+                    current_part = []
+                    current_length = 0
+            
+            current_part.append(line)
+            current_length += line_length
+        
+        # Add the last part
+        if current_part:
+            parts.append('\n'.join(current_part))
+        
+        return parts
+    
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle callback queries"""
+        """Handle callback queries for global markets"""
         query = update.callback_query
         await query.answer()
         
@@ -510,31 +629,6 @@ Due to rate limits, please use:
                 ticker = parts[1]
                 period = parts[2]
                 await self.perform_analysis(update, context, ticker, period)
-    
-    async def ask_for_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str):
-        """Ask user to select timeframe"""
-        message = f"📊 **Select timeframe for {ticker}**\n\n"
-        message += "Choose analysis period:"
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("3 Months", callback_data=f"analyze_{ticker}_3m"),
-                InlineKeyboardButton("6 Months", callback_data=f"analyze_{ticker}_6m")
-            ],
-            [
-                InlineKeyboardButton("1 Year", callback_data=f"analyze_{ticker}_1y"),
-                InlineKeyboardButton("2 Years", callback_data=f"analyze_{ticker}_2y")
-            ],
-            [InlineKeyboardButton("⬅️ Back", callback_data="ask_ticker")]
-        ]
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            message,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
-        )
     
     def _is_valid_ticker_symbol(self, text: str) -> bool:
         """Check if text is a valid ticker symbol"""
@@ -594,6 +688,9 @@ Due to rate limits, please use:
         
         app = Application.builder().token(self.config.TELEGRAM_TOKEN).build()
         
+        # Add error handler
+        app.add_error_handler(self.error_handler)
+        
         # Add handlers
         app.add_handler(CommandHandler("start", self.start))
         app.add_handler(CommandHandler("help", self.help_command))
@@ -611,3 +708,26 @@ Due to rate limits, please use:
         print("✅ Recommended tickers: AAPL, MSFT, SPY, GOLD, BTC")
         
         app.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle errors in the bot"""
+        logger.error(msg="Exception while handling an update:", exc_info=context.error)
+        
+        try:
+            # Try to send error message to user
+            if isinstance(update, Update):
+                if update.callback_query:
+                    chat_id = update.callback_query.message.chat_id
+                elif update.message:
+                    chat_id = update.effective_chat.id
+                else:
+                    return
+                
+                error_message = "❌ An error occurred. Please try again or use /start"
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=error_message,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        except Exception as e:
+            logger.error(f"Error sending error message: {e}")
