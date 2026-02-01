@@ -18,7 +18,13 @@ class TradingConfig:
     IS_RENDER: bool = os.getenv('RENDER') == 'true'
     IS_LOCAL: bool = not IS_RENDER
 
-    # Chart settings - Using field() for deferred initialization
+    # Rate limiting settings for Yahoo Finance
+    YAHOO_RATE_LIMIT: bool = True
+    YAHOO_MAX_RETRIES: int = 2
+    YAHOO_DELAY_SECONDS: float = 2.0 if IS_RENDER else 1.0
+    YAHOO_TIMEOUT: int = 15
+
+    # Chart settings
     CHART_COLORS: Dict = field(default_factory=lambda: None)
     CHART_STYLE: Dict = field(default_factory=lambda: None)
 
@@ -32,6 +38,9 @@ class TradingConfig:
 
     # Reversal detection settings
     REVERSAL_SETTINGS: Dict = field(default_factory=lambda: None)
+
+    # Caching settings - MUST be defined with field() 
+    CACHE_TTL: int = field(default=300)  # 5 minutes
 
     def __post_init__(self):
         """Initialize attributes after the object is created."""
@@ -47,10 +56,7 @@ class TradingConfig:
             }
 
     def _get_complete_color_scheme(self) -> Dict:
-        """
-        Returns a complete color scheme dictionary for all chart elements.
-        This includes colors for all potential moving averages and indicators.
-        """
+        """Returns a complete color scheme dictionary for all chart elements."""
         return {
             # Background and Base
             'background': '#0a0a0a',
@@ -60,17 +66,17 @@ class TradingConfig:
             # Price and Lines
             'price_line': '#40E0D0',  # Turquoise
 
-            # Moving Averages - CRITICAL: All must be defined here
+            # Moving Averages
             'ma_9': '#00FF9D',    # Bright Green
             'ma_20': '#FF6B9D',   # Pink
             'ma_50': '#9D4EDD',   # Purple
-            'ma_100': '#FFD700',  # Gold (for longer timeframes)
-            'ma_200': '#FF8C00',  # Dark Orange (for longer timeframes)
+            'ma_100': '#FFD700',  # Gold
+            'ma_200': '#FF8C00',  # Dark Orange
 
             # Bollinger Bands
             'bb_upper': '#FF00AA',
             'bb_lower': '#00FFAA',
-            'bb_middle': '#AAAAAA',  # Optional, often grey
+            'bb_middle': '#AAAAAA',
 
             # Volume
             'volume_up': '#00FF9D',
@@ -80,14 +86,14 @@ class TradingConfig:
             'rsi_line': '#FFFF00',      # Yellow
             'macd_line': '#00FF9D',     # Green
             'macd_signal': '#FF0080',   # Red
-            'macd_hist_positive': '#00FF9D',  # Green for positive histogram
-            'macd_hist_negative': '#FF0080',  # Red for negative histogram
+            'macd_hist_positive': '#00FF9D',
+            'macd_hist_negative': '#FF0080',
             'ad_line': '#00E0FF',       # Light Blue
 
             # Signals and Highlights
             'reversal_signal': '#FFAA00',
-            'oversold_area': '#00FF9D22',  # Green with transparency
-            'overbought_area': '#FF008022', # Red with transparency
+            'oversold_area': '#00FF9D22',
+            'overbought_area': '#FF008022',
         }
 
     def _get_chart_style(self) -> Dict:
@@ -99,7 +105,7 @@ class TradingConfig:
             'grid_alpha': 0.15,
             'title_font_size': 14,
             'label_font_size': 10,
-            'dpi': 100 if self.IS_RENDER else 120,  # Lower DPI on Render to save resources
+            'dpi': 100 if self.IS_RENDER else 120,
             'figure_size': (14, 10),
         }
 
@@ -110,4 +116,6 @@ CONFIG = TradingConfig()
 if __name__ == "__main__":
     print(f"Configuration loaded. IS_RENDER: {CONFIG.IS_RENDER}")
     print(f"CHART_COLORS contains 'ma_9': {'ma_9' in CONFIG.CHART_COLORS}")
-    print(f"Total colors defined: {len(CONFIG.CHART_COLORS)}")
+    print(f"Cache TTL: {CONFIG.CACHE_TTL} seconds")
+    print(f"Yahoo delay: {CONFIG.YAHOO_DELAY_SECONDS} seconds")
+    print(f"Total config attributes: {len(vars(CONFIG))}")

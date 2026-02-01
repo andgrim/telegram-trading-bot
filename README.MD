@@ -20,7 +20,7 @@ A professional trading analysis bot for Telegram with technical indicators and r
 ### Installation
 ```bash
 # Clone repository
-git clone git@github.com:tuousername/telegram-trading-bot.git
+git clone git@github.com:andgrim/telegram-trading-bot.git
 cd telegram-trading-bot
 
 # Install dependencies

@@ -7,7 +7,6 @@ import asyncio
 import os
 from datetime import datetime, timedelta
 import time
-import cachetools
 
 warnings.filterwarnings('ignore')
 
@@ -16,8 +15,13 @@ import ta
 
 from config import CONFIG
 
-# Cache for ticker data (to reduce API calls)
-ticker_cache = cachetools.TTLCache(maxsize=100, ttl=CONFIG.CACHE_TTL)
+# Import cachetools only if available
+try:
+    import cachetools
+    HAS_CACHE_TOOLS = True
+except ImportError:
+    HAS_CACHE_TOOLS = False
+    print("⚠️ cachetools not installed, caching disabled")
 
 class TradingAnalyzer:
     """Comprehensive analyzer for technical analysis with extended timeframes and international markets"""
@@ -26,6 +30,17 @@ class TradingAnalyzer:
         self.config = CONFIG
         self._request_count = 0
         self._last_request_time = time.time()
+        
+        # Initialize cache if cachetools is available
+        if HAS_CACHE_TOOLS and hasattr(self.config, 'CACHE_TTL'):
+            self.ticker_cache = cachetools.TTLCache(
+                maxsize=100, 
+                ttl=self.config.CACHE_TTL
+            )
+            print(f"✅ Cache initialized with TTL: {self.config.CACHE_TTL}s")
+        else:
+            self.ticker_cache = None
+            print("⚠️ Caching disabled")
     
     def _rate_limit(self):
         """Implement rate limiting for Yahoo Finance API"""
@@ -64,9 +79,9 @@ class TradingAnalyzer:
             
             # Check cache first
             cache_key = f"{formatted_ticker}_{fetch_period}"
-            if cache_key in ticker_cache:
+            if self.ticker_cache and cache_key in self.ticker_cache:
                 print(f"✅ Using cached data for {formatted_ticker}")
-                data = ticker_cache[cache_key]
+                data = self.ticker_cache[cache_key]
             else:
                 # Fetch data with rate limiting
                 data = await self._fetch_data_with_retry(formatted_ticker, fetch_period)
@@ -83,8 +98,9 @@ class TradingAnalyzer:
                             'error': f'No data found for {ticker_symbol}. Try US stocks (AAPL, TSLA) or major indices (SPX, GOLD).'
                         }
                 
-                # Cache the data
-                ticker_cache[cache_key] = data
+                # Cache the data if cache is available
+                if self.ticker_cache is not None:
+                    self.ticker_cache[cache_key] = data
             
             print(f"✅ Data fetched: {len(data)} rows")
             
@@ -136,7 +152,7 @@ class TradingAnalyzer:
     async def _fetch_data_with_retry(self, ticker_symbol: str, yf_period: str, max_retries: int = None) -> pd.DataFrame:
         """Fetch data with improved rate limiting and error handling"""
         if max_retries is None:
-            max_retries = self.config.YAHOO_MAX_RETRIES
+            max_retries = getattr(self.config, 'YAHOO_MAX_RETRIES', 2)
         
         for attempt in range(max_retries):
             try:
@@ -147,13 +163,14 @@ class TradingAnalyzer:
                 
                 # Try direct download (simplified approach)
                 try:
+                    yahoo_timeout = getattr(self.config, 'YAHOO_TIMEOUT', 15)
                     data = yf.download(
                         tickers=ticker_symbol,
                         period=yf_period,
                         interval="1d",
                         progress=False,
                         threads=False,  # Single thread to reduce rate limiting
-                        timeout=self.config.YAHOO_TIMEOUT,
+                        timeout=yahoo_timeout,
                         auto_adjust=True,
                         ignore_tz=True,
                         prepost=False,
@@ -166,8 +183,9 @@ class TradingAnalyzer:
                     
                 except Exception as e:
                     if "429" in str(e) or "Too Many Requests" in str(e):
-                        print(f"⚠️ Rate limited, waiting {self.config.YAHOO_DELAY_SECONDS * 2} seconds...")
-                        await asyncio.sleep(self.config.YAHOO_DELAY_SECONDS * 2)
+                        yahoo_delay = getattr(self.config, 'YAHOO_DELAY_SECONDS', 2.0)
+                        print(f"⚠️ Rate limited, waiting {yahoo_delay * 2} seconds...")
+                        await asyncio.sleep(yahoo_delay * 2)
                         continue
                     print(f"Download error: {str(e)[:100]}")
                 
@@ -178,10 +196,11 @@ class TradingAnalyzer:
                         self._rate_limit()
                         
                         ticker = yf.Ticker(ticker_symbol)
+                        yahoo_timeout = getattr(self.config, 'YAHOO_TIMEOUT', 15)
                         data = ticker.history(
                             period=yf_period,
                             interval="1d",
-                            timeout=self.config.YAHOO_TIMEOUT
+                            timeout=yahoo_timeout
                         )
                         
                         if data is not None and not data.empty:
@@ -192,14 +211,16 @@ class TradingAnalyzer:
                 
                 # Wait before next attempt
                 if attempt < max_retries - 1:
-                    wait_time = self.config.YAHOO_DELAY_SECONDS * (attempt + 1)
+                    yahoo_delay = getattr(self.config, 'YAHOO_DELAY_SECONDS', 2.0)
+                    wait_time = yahoo_delay * (attempt + 1)
                     print(f"Waiting {wait_time} seconds before next attempt...")
                     await asyncio.sleep(wait_time)
                 
             except Exception as e:
                 print(f"Fetch attempt {attempt + 1} failed: {str(e)[:100]}")
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(self.config.YAHOO_DELAY_SECONDS)
+                    yahoo_delay = getattr(self.config, 'YAHOO_DELAY_SECONDS', 2.0)
+                    await asyncio.sleep(yahoo_delay)
         
         print(f"❌ All fetch attempts failed for {ticker_symbol}")
         return None
@@ -276,92 +297,6 @@ class TradingAnalyzer:
             variants.append(ticker)
         
         return variants
-    
-    async def _fetch_data_with_retry(self, ticker_symbol: str, yf_period: str, max_retries: int = 2) -> pd.DataFrame:
-        """Fetch data with retry logic - improved for European stocks"""
-        for attempt in range(max_retries):
-            try:
-                print(f"📥 Fetch attempt {attempt + 1}/{max_retries} for {ticker_symbol}")
-                
-                if attempt > 0:
-                    await asyncio.sleep(attempt * 1)  # Reduced wait time
-                
-                # Method 1: Try with Ticker object first
-                try:
-                    ticker = yf.Ticker(ticker_symbol)
-                    info = ticker.info
-                    
-                    # Check if ticker has valid info
-                    if not info or 'symbol' not in info:
-                        print(f"⚠️ Ticker {ticker_symbol} has no info, trying alternative methods")
-                    else:
-                        data = ticker.history(period=yf_period, interval="1d", timeout=10)
-                        if data is not None and not data.empty:
-                            print(f"✅ Method 1 (Ticker) successful: {len(data)} rows")
-                            return data
-                except Exception as e1:
-                    print(f"Method 1 (Ticker) failed: {str(e1)[:100]}")
-                
-                # Method 2: Direct download with adjusted parameters
-                try:
-                    data = yf.download(
-                        tickers=ticker_symbol,
-                        period=yf_period,
-                        interval="1d",
-                        progress=False,
-                        threads=True,  # Changed to True
-                        timeout=10,    # Reduced timeout
-                        auto_adjust=False,
-                        ignore_tz=True,  # Add this parameter
-                        prepost=False    # Add this parameter
-                    )
-                    if data is not None and not data.empty:
-                        print(f"✅ Method 2 successful: {len(data)} rows")
-                        return data
-                except Exception as e2:
-                    print(f"Method 2 failed: {str(e2)[:100]}")
-                
-                # Method 3: Try with repair
-                try:
-                    data = yf.download(
-                        tickers=ticker_symbol,
-                        period=yf_period,
-                        interval="1d",
-                        progress=False,
-                        threads=True,
-                        timeout=10,
-                        repair=True
-                    )
-                    if data is not None and not data.empty:
-                        print(f"✅ Method 3 successful: {len(data)} rows")
-                        return data
-                except Exception as e3:
-                    print(f"Method 3 failed: {str(e3)[:100]}")
-                
-                # Method 4: Try different period for European stocks
-                try:
-                    # Try with 1y period if longer period fails
-                    alt_period = "1y" if yf_period != "1y" else yf_period
-                    data = yf.download(
-                        tickers=ticker_symbol,
-                        period=alt_period,
-                        interval="1d",
-                        progress=False,
-                        threads=True,
-                        timeout=10,
-                        auto_adjust=True
-                    )
-                    if data is not None and not data.empty:
-                        print(f"✅ Method 4 (alt period) successful: {len(data)} rows")
-                        return data
-                except Exception as e4:
-                    print(f"Method 4 failed: {str(e4)[:100]}")
-                
-            except Exception as e:
-                print(f"Fetch attempt {attempt + 1} failed: {str(e)[:100]}")
-        
-        print(f"❌ All fetch attempts failed for {ticker_symbol}")
-        return None
     
     def _trim_to_period(self, data: pd.DataFrame, period: str) -> pd.DataFrame:
         """Trim data to requested period while keeping enough for indicator calculations"""
@@ -646,7 +581,6 @@ class TradingAnalyzer:
         df = df.ffill()
         
         print(f"✅ Indicators calculated successfully")
-        print(f"Available indicators: {[col for col in df.columns if col not in required_cols][:10]}...")
         
         return df
     

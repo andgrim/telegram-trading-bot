@@ -48,6 +48,7 @@ def run_telegram_bot():
     print("⚠️  Note: Using rate limiting for Yahoo Finance API")
     print("📊 Recommended tickers: AAPL, MSFT, SPY, GOLD, BTC")
     print("⏱️  Delay between requests: 2 seconds")
+    print("💾 Caching enabled: Yes (5 min TTL)")
     
     try:
         from bot import TradingBot
