@@ -35,11 +35,20 @@ class TradingAnalyzer:
                 '5y': '6y'      # Get 6 years data for 5y analysis
             }
             
-            fetch_period = yf_period_map.get(period, '2y')
+            fetch_period = yf_period_map.get(period, '1y')  # Default to 1y
             
             # Handle ticker formatting for yfinance
             formatted_ticker = self._format_ticker_for_yfinance(ticker_symbol)
             print(f"Formatted ticker: {ticker_symbol} -> {formatted_ticker}")
+            
+            # Validate ticker exists before fetching
+            try:
+                ticker_obj = yf.Ticker(formatted_ticker)
+                test_info = ticker_obj.info
+                if not test_info or 'symbol' not in test_info:
+                    print(f"Warning: Ticker {formatted_ticker} may not exist")
+            except Exception as val_err:
+                print(f"Ticker validation warning: {val_err}")
             
             # Fetch data
             data = await self._fetch_data_with_retry(formatted_ticker, fetch_period)
@@ -50,7 +59,7 @@ class TradingAnalyzer:
                 
                 # For European stocks, try different formats
                 european_tickers = self._get_european_ticker_variants(ticker_symbol)
-                for alt_ticker in european_tickers:
+                for alt_ticker in european_tickers[:3]:  # Limit to 3 alternatives
                     print(f"Trying alternative: {alt_ticker}")
                     data = await self._fetch_data_with_retry(alt_ticker, fetch_period)
                     if data is not None and not data.empty:
@@ -61,7 +70,7 @@ class TradingAnalyzer:
                 if data is None or data.empty:
                     return {
                         'success': False, 
-                        'error': f'No data found for {ticker_symbol}. Try using Yahoo Finance format like: ISP.MI, AI.PA, etc.'
+                        'error': f'No data found for {ticker_symbol}. Please check:\n• Yahoo Finance format: ISP.MI, AI.PA, ADS.DE\n• Verify existence: https://finance.yahoo.com/quote/{formatted_ticker}\n• Try US stocks: AAPL, TSLA, MSFT'
                     }
             
             print(f"✅ Data fetched: {len(data)} rows")
@@ -124,6 +133,13 @@ class TradingAnalyzer:
             'ENEL': 'ENEL.MI',
             'ENI': 'ENI.MI',
             'UCG': 'UCG.MI',  # Unicredit
+            'G': 'G.MI',      # Assicurazioni Generali
+            'GUAL': 'G.MI',   # Alternative for Generali
+            'TIT': 'TIT.MI',  # Telecom Italia
+            'STM': 'STM.MI',  # STMicroelectronics
+            'DIA': 'DIA.MI',  # DiaSorin
+            'SRG': 'SRG.MI',  # Snam
+            'REC': 'REC.MI',  # Recordati
             
             # Germany (.DE = Frankfurt)
             'ADS': 'ADS.DE',  # Adidas
@@ -238,84 +254,88 @@ class TradingAnalyzer:
         
         return variants
     
-    async def _fetch_data_with_retry(self, ticker_symbol: str, yf_period: str, max_retries: int = 3) -> pd.DataFrame:
-        """Fetch data with retry logic"""
+    async def _fetch_data_with_retry(self, ticker_symbol: str, yf_period: str, max_retries: int = 2) -> pd.DataFrame:
+        """Fetch data with retry logic - improved for European stocks"""
         for attempt in range(max_retries):
             try:
                 print(f"📥 Fetch attempt {attempt + 1}/{max_retries} for {ticker_symbol}")
                 
                 if attempt > 0:
-                    await asyncio.sleep(attempt * 2)
+                    await asyncio.sleep(attempt * 1)  # Reduced wait time
                 
-                # Try multiple methods
-                data = None
+                # Method 1: Try with Ticker object first
+                try:
+                    ticker = yf.Ticker(ticker_symbol)
+                    info = ticker.info
+                    
+                    # Check if ticker has valid info
+                    if not info or 'symbol' not in info:
+                        print(f"⚠️ Ticker {ticker_symbol} has no info, trying alternative methods")
+                    else:
+                        data = ticker.history(period=yf_period, interval="1d", timeout=10)
+                        if data is not None and not data.empty:
+                            print(f"✅ Method 1 (Ticker) successful: {len(data)} rows")
+                            return data
+                except Exception as e1:
+                    print(f"Method 1 (Ticker) failed: {str(e1)[:100]}")
                 
-                # Method 1: Direct download with auto_adjust
+                # Method 2: Direct download with adjusted parameters
                 try:
                     data = yf.download(
                         tickers=ticker_symbol,
                         period=yf_period,
                         interval="1d",
                         progress=False,
-                        threads=False,
-                        timeout=15,
+                        threads=True,  # Changed to True
+                        timeout=10,    # Reduced timeout
+                        auto_adjust=False,
+                        ignore_tz=True,  # Add this parameter
+                        prepost=False    # Add this parameter
+                    )
+                    if data is not None and not data.empty:
+                        print(f"✅ Method 2 successful: {len(data)} rows")
+                        return data
+                except Exception as e2:
+                    print(f"Method 2 failed: {str(e2)[:100]}")
+                
+                # Method 3: Try with repair
+                try:
+                    data = yf.download(
+                        tickers=ticker_symbol,
+                        period=yf_period,
+                        interval="1d",
+                        progress=False,
+                        threads=True,
+                        timeout=10,
+                        repair=True
+                    )
+                    if data is not None and not data.empty:
+                        print(f"✅ Method 3 successful: {len(data)} rows")
+                        return data
+                except Exception as e3:
+                    print(f"Method 3 failed: {str(e3)[:100]}")
+                
+                # Method 4: Try different period for European stocks
+                try:
+                    # Try with 1y period if longer period fails
+                    alt_period = "1y" if yf_period != "1y" else yf_period
+                    data = yf.download(
+                        tickers=ticker_symbol,
+                        period=alt_period,
+                        interval="1d",
+                        progress=False,
+                        threads=True,
+                        timeout=10,
                         auto_adjust=True
                     )
                     if data is not None and not data.empty:
-                        print(f"✅ Method 1 successful: {len(data)} rows")
+                        print(f"✅ Method 4 (alt period) successful: {len(data)} rows")
                         return data
-                except Exception as e1:
-                    print(f"Method 1 failed: {e1}")
-                
-                # Method 2: Download without auto_adjust
-                if data is None or data.empty:
-                    try:
-                        data = yf.download(
-                            tickers=ticker_symbol,
-                            period=yf_period,
-                            interval="1d",
-                            progress=False,
-                            threads=False,
-                            timeout=15,
-                            auto_adjust=False
-                        )
-                        if data is not None and not data.empty:
-                            print(f"✅ Method 2 successful: {len(data)} rows")
-                            return data
-                    except Exception as e2:
-                        print(f"Method 2 failed: {e2}")
-                
-                # Method 3: Use Ticker object
-                if data is None or data.empty:
-                    try:
-                        ticker = yf.Ticker(ticker_symbol)
-                        data = ticker.history(period=yf_period, interval="1d", timeout=15)
-                        if data is not None and not data.empty:
-                            print(f"✅ Method 3 successful: {len(data)} rows")
-                            return data
-                    except Exception as e3:
-                        print(f"Method 3 failed: {e3}")
-                
-                # Method 4: Try with repair parameter
-                if data is None or data.empty:
-                    try:
-                        data = yf.download(
-                            tickers=ticker_symbol,
-                            period=yf_period,
-                            interval="1d",
-                            progress=False,
-                            threads=False,
-                            timeout=20,
-                            repair=True
-                        )
-                        if data is not None and not data.empty:
-                            print(f"✅ Method 4 successful: {len(data)} rows")
-                            return data
-                    except Exception as e4:
-                        print(f"Method 4 failed: {e4}")
+                except Exception as e4:
+                    print(f"Method 4 failed: {str(e4)[:100]}")
                 
             except Exception as e:
-                print(f"Fetch attempt {attempt + 1} failed: {str(e)}")
+                print(f"Fetch attempt {attempt + 1} failed: {str(e)[:100]}")
         
         print(f"❌ All fetch attempts failed for {ticker_symbol}")
         return None

@@ -21,11 +21,24 @@ from analyzer import TradingAnalyzer
 from chart_generator import ChartGenerator
 from config import CONFIG
 
+def setup_logging():
+    """Configure logging for production"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('bot.log')
+        ]
+    )
+    
+    # Suppress yfinance debug logs
+    logging.getLogger('yfinance').setLevel(logging.WARNING)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('telegram').setLevel(logging.WARNING)
+
 # Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 class TradingBot:
@@ -482,6 +495,8 @@ Please type the symbol for the financial instrument you want to analyze:
                 error_msg += "• Check the ticker symbol is correct\n"
                 error_msg += "• European stocks need exchange suffix (.MI, .PA, .DE, etc.)\n"
                 error_msg += "• Try alternative ticker formats\n"
+                error_msg += "• Visit: https://finance.yahoo.com/quote/{ticker}\n"
+                error_msg += "• Try US ticker: AAPL, TSLA, MSFT"
                 
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
