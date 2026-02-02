@@ -1,246 +1,188 @@
+"""
+Universal Trading Analyzer
+Supports all Yahoo Finance markets and tickers
+"""
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple, Any
 import warnings
 import asyncio
-import os
-from datetime import datetime, timedelta
 import time
+from datetime import datetime
 
 warnings.filterwarnings('ignore')
 
-# Using pure Python TA library
 import ta
-
 from config import CONFIG
 
-# Import cachetools only if available
-try:
-    import cachetools
-    HAS_CACHE_TOOLS = True
-except ImportError:
-    HAS_CACHE_TOOLS = False
-    print("⚠️ cachetools not installed, caching disabled")
+class SimpleCache:
+    """Simple in-memory cache for all tickers"""
+    def __init__(self, ttl: int = 300, max_size: int = 100):
+        self.ttl = ttl
+        self.max_size = max_size
+        self.cache = {}
+        self.timestamps = {}
+    
+    def get(self, key: str):
+        if key in self.cache:
+            if time.time() - self.timestamps[key] < self.ttl:
+                return self.cache[key]
+            else:
+                del self.cache[key]
+                del self.timestamps[key]
+        return None
+    
+    def set(self, key: str, value):
+        if len(self.cache) >= self.max_size:
+            oldest_key = min(self.timestamps, key=self.timestamps.get)
+            del self.cache[oldest_key]
+            del self.timestamps[oldest_key]
+        self.cache[key] = value
+        self.timestamps[key] = time.time()
 
 class TradingAnalyzer:
-    """Comprehensive analyzer for technical analysis with extended timeframes and international markets"""
+    """Universal analyzer for ALL Yahoo Finance tickers"""
     
     def __init__(self):
         self.config = CONFIG
-        self._request_count = 0
-        self._last_request_time = time.time()
+        self._last_request_time = 0
+        self.cache = SimpleCache(
+            ttl=self.config.CACHE_TTL,
+            max_size=self.config.MAX_CACHE_SIZE
+        )
         
-        # Initialize cache if cachetools is available
-        if HAS_CACHE_TOOLS and hasattr(self.config, 'CACHE_TTL'):
-            self.ticker_cache = cachetools.TTLCache(
-                maxsize=100, 
-                ttl=self.config.CACHE_TTL
-            )
-            print(f"✅ Cache initialized with TTL: {self.config.CACHE_TTL}s")
-        else:
-            self.ticker_cache = None
-            print("⚠️ Caching disabled")
+        print("✅ Universal Analyzer initialized")
+        print("🌍 Supports all markets and tickers")
+        print(f"⏱️ Delay: {self.config.YAHOO_DELAY_SECONDS}s")
     
     def _rate_limit(self):
-        """Implement rate limiting for Yahoo Finance API"""
+        """Rate limiting for Yahoo Finance"""
         current_time = time.time()
         time_since_last = current_time - self._last_request_time
         
-        if self.config.YAHOO_RATE_LIMIT:
-            # Enforce minimum delay between requests
-            min_delay = self.config.YAHOO_DELAY_SECONDS
-            if time_since_last < min_delay:
-                sleep_time = min_delay - time_since_last
-                time.sleep(sleep_time)
+        if time_since_last < self.config.YAHOO_DELAY_SECONDS:
+            sleep_time = self.config.YAHOO_DELAY_SECONDS - time_since_last
+            time.sleep(sleep_time)
         
         self._last_request_time = time.time()
     
     async def analyze_ticker(self, ticker_symbol: str, period: str = '1y') -> Dict:
-        """Perform comprehensive analysis with complete indicators for all timeframes"""
+        """Universal analysis method for any ticker"""
         try:
-            print(f"🔍 Starting analysis for {ticker_symbol} ({period})")
+            print(f"🔍 Analyzing {ticker_symbol} ({period})")
             
-            # Map period to yfinance format
-            yf_period_map = {
-                '3m': '3mo',    # Reduced from 6mo to 3mo
-                '6m': '6mo',    # Reduced from 1y to 6mo
-                '1y': '1y',     # Reduced from 2y to 1y
-                '2y': '2y',     # Reduced from 3y to 2y
-                '3y': '3y',     # Reduced from 5y to 3y
-                '5y': '5y'      # Keep 5y
+            # Map period
+            period_map = {
+                '3m': '3mo', '3months': '3mo', '3month': '3mo',
+                '6m': '6mo', '6months': '6mo', '6month': '6mo',
+                '1y': '1y', '1year': '1y',
+                '2y': '2y', '2years': '2y',
+                '3y': '3y', '3years': '3y',
+                '5y': '5y', '5years': '5y',
+                'max': 'max', 'maximum': 'max'
             }
+            yf_period = period_map.get(period.lower(), '1y')
             
-            fetch_period = yf_period_map.get(period, '1y')
-            
-            # Handle ticker formatting for yfinance
+            # Format ticker
             formatted_ticker = self._format_ticker_for_yfinance(ticker_symbol)
-            print(f"Formatted ticker: {ticker_symbol} -> {formatted_ticker}")
+            print(f"Formatted: {ticker_symbol} -> {formatted_ticker}")
             
-            # Check cache first
-            cache_key = f"{formatted_ticker}_{fetch_period}"
-            if self.ticker_cache and cache_key in self.ticker_cache:
-                print(f"✅ Using cached data for {formatted_ticker}")
-                data = self.ticker_cache[cache_key]
+            # Get exchange info
+            exchange_info = self.config.get_exchange_info(formatted_ticker)
+            print(f"Exchange: {exchange_info['exchange']}")
+            
+            # Check cache
+            cache_key = f"{formatted_ticker}_{yf_period}"
+            cached_data = self.cache.get(cache_key)
+            
+            if cached_data is not None:
+                print("✅ Using cached data")
+                data = cached_data
             else:
-                # Fetch data with rate limiting
-                data = await self._fetch_data_with_retry(formatted_ticker, fetch_period)
+                # Fetch data with multiple attempts
+                data = await self._fetch_data_universal(formatted_ticker, yf_period, exchange_info)
                 
                 if data is None or data.empty:
-                    # Try without suffix for US stocks
-                    if '.' in formatted_ticker:
-                        print(f"Trying without suffix: {ticker_symbol}")
-                        data = await self._fetch_data_with_retry(ticker_symbol, fetch_period)
-                    
-                    if data is None or data.empty:
-                        return {
-                            'success': False, 
-                            'error': f'No data found for {ticker_symbol}. Try US stocks (AAPL, TSLA) or major indices (SPX, GOLD).'
-                        }
+                    return {
+                        'success': False,
+                        'error': f"No data found for {ticker_symbol}. Check if ticker exists on Yahoo Finance."
+                    }
                 
-                # Cache the data if cache is available
-                if self.ticker_cache is not None:
-                    self.ticker_cache[cache_key] = data
+                # Cache it
+                self.cache.set(cache_key, data)
+                print(f"✅ Data fetched: {len(data)} rows")
             
-            print(f"✅ Data fetched: {len(data)} rows")
+            # Clean data before indicator calculation
+            data = self._clean_data(data)
             
-            # Flatten MultiIndex columns
-            data = self._flatten_dataframe(data)
-            
-            # Trim data to requested period
-            data = self._trim_to_period(data, period)
+            # Calculate technical indicators
+            data = self._calculate_complete_indicators(data)
             
             # Get ticker info
             info = await self._get_ticker_info(formatted_ticker, data, ticker_symbol)
             
-            # Calculate technical indicators
-            data = self._calculate_complete_indicators(data, period)
-            
-            # Get fundamental analysis
-            fundamental = self._analyze_fundamentals(info)
-            
-            # Generate signals
-            signals = self._generate_signals(data)
+            # Generate all signals
+            signals = self._generate_all_signals(data)
             
             # Detect reversal patterns
             reversal_patterns = self._detect_reversal_patterns(data)
             
-            # Prepare summaries
-            summary = self._prepare_summary(ticker_symbol, data, info, fundamental, signals, reversal_patterns)
-            compact_summary = self._prepare_compact_summary(ticker_symbol, data, info, fundamental, signals, reversal_patterns)
+            # Detect divergences
+            divergences = self._detect_divergences(data)
             
+            # Calculate performance statistics
+            stats = self._calculate_statistics(data)
+            
+            # Prepare summary
+            summary = self._create_comprehensive_summary(
+                ticker_symbol, data, info, signals, 
+                reversal_patterns, divergences, stats, exchange_info
+            )
+            compact = self._create_compact_summary(ticker_symbol, data, info, signals, divergences)
+            
+            # Debug: Print signal counts
+            bull_count = len([s for s in signals if s['direction'] == 'BULLISH'])
+            bear_count = len([s for s in signals if s['direction'] == 'BEARISH'])
             print(f"✅ Analysis complete for {ticker_symbol}")
+            print(f"📊 Signals: {bull_count} Bullish, {bear_count} Bearish, {len(signals)} Total")
             
             return {
                 'success': True,
                 'data': data,
                 'info': info,
-                'fundamental': fundamental,
                 'signals': signals,
                 'reversal_patterns': reversal_patterns,
+                'divergences': divergences,
+                'stats': stats,
                 'summary': summary,
-                'compact_summary': compact_summary,
-                'requested_period': period
+                'compact_summary': compact,
+                'period': period,
+                'exchange': exchange_info['exchange']
             }
             
         except Exception as e:
-            print(f"❌ Error in analyze_ticker: {str(e)}")
+            print(f"❌ Error analyzing {ticker_symbol}: {str(e)}")
             import traceback
             traceback.print_exc()
-            return {'success': False, 'error': str(e)}
+            return {
+                'success': False,
+                'error': f"Analysis failed: {str(e)[:150]}"
+            }
     
-    async def _fetch_data_with_retry(self, ticker_symbol: str, yf_period: str, max_retries: int = None) -> pd.DataFrame:
-        """Fetch data with improved rate limiting and error handling"""
-        if max_retries is None:
-            max_retries = getattr(self.config, 'YAHOO_MAX_RETRIES', 2)
+    def _format_ticker_for_yfinance(self, ticker: str) -> str:
+        """Format ticker for yfinance - universal"""
+        ticker = ticker.upper().strip().replace('$', '')
         
-        for attempt in range(max_retries):
-            try:
-                print(f"📥 Fetch attempt {attempt + 1}/{max_retries} for {ticker_symbol}")
-                
-                # Apply rate limiting
-                self._rate_limit()
-                
-                # Try direct download (simplified approach)
-                try:
-                    yahoo_timeout = getattr(self.config, 'YAHOO_TIMEOUT', 15)
-                    data = yf.download(
-                        tickers=ticker_symbol,
-                        period=yf_period,
-                        interval="1d",
-                        progress=False,
-                        threads=False,  # Single thread to reduce rate limiting
-                        timeout=yahoo_timeout,
-                        auto_adjust=True,
-                        ignore_tz=True,
-                        prepost=False,
-                        show_errors=False  # Suppress error messages
-                    )
-                    
-                    if data is not None and not data.empty:
-                        print(f"✅ Download successful: {len(data)} rows")
-                        return data
-                    
-                except Exception as e:
-                    if "429" in str(e) or "Too Many Requests" in str(e):
-                        yahoo_delay = getattr(self.config, 'YAHOO_DELAY_SECONDS', 2.0)
-                        print(f"⚠️ Rate limited, waiting {yahoo_delay * 2} seconds...")
-                        await asyncio.sleep(yahoo_delay * 2)
-                        continue
-                    print(f"Download error: {str(e)[:100]}")
-                
-                # Try with Ticker object as fallback
-                if attempt == max_retries - 1:
-                    try:
-                        print(f"Trying Ticker.history() as fallback...")
-                        self._rate_limit()
-                        
-                        ticker = yf.Ticker(ticker_symbol)
-                        yahoo_timeout = getattr(self.config, 'YAHOO_TIMEOUT', 15)
-                        data = ticker.history(
-                            period=yf_period,
-                            interval="1d",
-                            timeout=yahoo_timeout
-                        )
-                        
-                        if data is not None and not data.empty:
-                            print(f"✅ Ticker.history successful: {len(data)} rows")
-                            return data
-                    except Exception as e2:
-                        print(f"Ticker.history failed: {str(e2)[:100]}")
-                
-                # Wait before next attempt
-                if attempt < max_retries - 1:
-                    yahoo_delay = getattr(self.config, 'YAHOO_DELAY_SECONDS', 2.0)
-                    wait_time = yahoo_delay * (attempt + 1)
-                    print(f"Waiting {wait_time} seconds before next attempt...")
-                    await asyncio.sleep(wait_time)
-                
-            except Exception as e:
-                print(f"Fetch attempt {attempt + 1} failed: {str(e)[:100]}")
-                if attempt < max_retries - 1:
-                    yahoo_delay = getattr(self.config, 'YAHOO_DELAY_SECONDS', 2.0)
-                    await asyncio.sleep(yahoo_delay)
-        
-        print(f"❌ All fetch attempts failed for {ticker_symbol}")
-        return None
-    
-    def _format_ticker_for_yfinance(self, ticker_symbol: str) -> str:
-        """Format ticker symbol for yfinance library - SIMPLIFIED"""
-        ticker = ticker_symbol.strip().upper()
-        
-        # Remove common prefixes
-        if ticker.startswith('$'):
-            ticker = ticker[1:]
-        
-        # Only map common indices and commodities (not individual stocks)
+        # Common mappings for indices and commodities
         special_mapping = {
             # US Indices
             'SPX': '^GSPC',
-            'SPY': 'SPY',  # S&P 500 ETF
+            'SPY': 'SPY',
             'DJI': '^DJI',
+            'DIA': 'DIA',
             'IXIC': '^IXIC',
-            'QQQ': 'QQQ',  # NASDAQ ETF
+            'QQQ': 'QQQ',
             'VIX': '^VIX',
             
             # European Indices
@@ -248,10 +190,13 @@ class TradingAnalyzer:
             'CAC': '^FCHI',
             'FTSE': '^FTSE',
             'IBEX': '^IBEX',
+            'STOXX50': '^STOXX50E',
             
             # Asian Indices
             'N225': '^N225',
             'HSI': '^HSI',
+            'SSEC': '000001.SS',
+            'SENSEX': '^BSESN',
             
             # Commodities
             'GOLD': 'GC=F',
@@ -265,125 +210,219 @@ class TradingAnalyzer:
             'EURUSD': 'EURUSD=X',
             'GBPUSD': 'GBPUSD=X',
             'USDJPY': 'JPY=X',
+            'USDCHF': 'CHF=X',
+            'USDCAD': 'CAD=X',
+            'AUDUSD': 'AUDUSD=X',
             
             # Crypto
             'BTC': 'BTC-USD',
             'ETH': 'ETH-USD',
             'XRP': 'XRP-USD',
             'DOGE': 'DOGE-USD',
+            'ADA': 'ADA-USD',
+            'SOL': 'SOL-USD',
             
             # Popular ETFs
-            'VOO': 'VOO',  # Vanguard S&P 500
-            'VTI': 'VTI',  # Vanguard Total Stock Market
-            'BND': 'BND',  # Vanguard Total Bond Market
-        }
-        
-        if ticker in special_mapping:
-            return special_mapping[ticker]
-        
-        # For individual stocks, keep as is (let yfinance handle it)
-        return ticker
-    
-    def _get_european_ticker_variants(self, ticker_symbol: str) -> List[str]:
-        """Generate alternative ticker formats - LIMITED"""
-        ticker = ticker_symbol.strip().upper()
-        variants = []
-        
-        # Only try 2 alternatives to reduce API calls
-        if '.' not in ticker:
-            variants.append(f"{ticker}.MI")  # Italian
-            variants.append(f"{ticker}.PA")  # French
-        else:
-            variants.append(ticker)
-        
-        return variants
-    
-    def _trim_to_period(self, data: pd.DataFrame, period: str) -> pd.DataFrame:
-        """Trim data to requested period while keeping enough for indicator calculations"""
-        # Define how many trading days to keep for each period
-        period_trading_days = {
-            '3m': 63,    # 3 months
-            '6m': 126,   # 6 months
-            '1y': 252,   # 1 year
-            '2y': 504,   # 2 years
-            '3y': 756,   # 3 years
-            '5y': 1260   # 5 years
-        }
-        
-        days_to_keep = period_trading_days.get(period, 252)
-        
-        # Add buffer for indicator calculations
-        buffer_days = {
-            '3m': 60,    # Additional 2 months
-            '6m': 90,    # Additional 3 months
-            '1y': 180,   # Additional 6 months
-            '2y': 250,   # Additional 10 months
-            '3y': 300,   # Additional 1 year
-            '5y': 500    # Additional 2 years
-        }
-        
-        days_to_keep += buffer_days.get(period, 180)
-        
-        # Ensure we don't exceed available data
-        if len(data) > days_to_keep:
-            return data.iloc[-days_to_keep:]
-        else:
-            return data
-    
-    async def _get_ticker_info(self, formatted_ticker: str, data: pd.DataFrame, original_ticker: str) -> Dict:
-        """Get ticker information with fallback"""
-        try:
-            ticker = yf.Ticker(formatted_ticker)
-            info = ticker.info
+            'VOO': 'VOO',
+            'VTI': 'VTI',
+            'BND': 'BND',
+            'GLD': 'GLD',
+            'SLV': 'SLV',
+            'IWM': 'IWM',
             
-            # If info is empty, create basic info
+            # Futures
+            'ES': 'ES=F',
+            'NQ': 'NQ=F',
+            'YM': 'YM=F',
+            'RTY': 'RTY=F',
+        }
+        
+        # Return mapped ticker or original
+        return special_mapping.get(ticker, ticker)
+    
+    def _clean_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Clean and prepare data for analysis"""
+        if data.empty:
+            return data
+        
+        df = data.copy()
+        
+        # Ensure single-level columns (handle multi-index from yfinance)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        
+        # Rename columns if needed
+        if 'Adj Close' in df.columns:
+            df = df.rename(columns={'Adj Close': 'Close'})
+        
+        # Ensure we have required columns
+        required_columns = ['Close', 'High', 'Low', 'Open', 'Volume']
+        for col in required_columns:
+            if col not in df.columns:
+                if col == 'Volume':
+                    df[col] = 0
+                elif col == 'Close':
+                    df[col] = df.iloc[:, -1] if len(df.columns) > 0 else 0
+        
+        # Ensure all data is numeric
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # Drop rows with NaN in critical columns
+        df = df.dropna(subset=['Close', 'High', 'Low', 'Open'])
+        
+        # Ensure index is datetime
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index)
+        
+        return df
+    
+    async def _fetch_data_universal(self, ticker: str, period: str, exchange_info: Dict) -> Optional[pd.DataFrame]:
+        """Universal data fetching for any ticker"""
+        attempts = [
+            lambda: self._fetch_direct(ticker, period),
+            lambda: self._fetch_ticker_object(ticker, period),
+            lambda: self._fetch_with_alternatives(ticker, period, exchange_info),
+        ]
+        
+        for i, fetch_method in enumerate(attempts):
+            if i > 0:
+                wait_time = self.config.YAHOO_DELAY_SECONDS * i
+                print(f"⏳ Waiting {wait_time}s before attempt {i+1}...")
+                await asyncio.sleep(wait_time)
+            
+            try:
+                print(f"📥 Attempt {i+1}/{len(attempts)}: {fetch_method.__name__}")
+                self._rate_limit()
+                
+                data = fetch_method()
+                
+                if data is not None and not data.empty:
+                    print(f"✅ Success with {fetch_method.__name__}: {len(data)} rows")
+                    return data
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"⚠️ Attempt {i+1} failed: {error_msg[:100]}")
+                
+                if "429" in error_msg or "rate limit" in error_msg.lower():
+                    wait = self.config.YAHOO_DELAY_SECONDS * 3
+                    print(f"⏸️ Rate limited, waiting {wait}s...")
+                    await asyncio.sleep(wait)
+        
+        print(f"❌ All fetch attempts failed for {ticker}")
+        return None
+    
+    def _fetch_direct(self, ticker: str, period: str) -> Optional[pd.DataFrame]:
+        """Direct download using yf.download"""
+        try:
+            data = yf.download(
+                tickers=ticker,
+                period=period,
+                interval="1d",
+                progress=False,
+                threads=False,
+                timeout=self.config.YAHOO_TIMEOUT,
+                auto_adjust=True,
+                prepost=False
+            )
+            return data if not data.empty else None
+        except Exception as e:
+            print(f"Direct download error: {e}")
+            return None
+    
+    def _fetch_ticker_object(self, ticker: str, period: str) -> Optional[pd.DataFrame]:
+        """Fetch using yf.Ticker object"""
+        try:
+            ticker_obj = yf.Ticker(ticker)
+            data = ticker_obj.history(
+                period=period,
+                interval="1d",
+                timeout=self.config.YAHOO_TIMEOUT
+            )
+            return data if not data.empty else None
+        except Exception as e:
+            print(f"Ticker object error: {e}")
+            return None
+    
+    def _fetch_with_alternatives(self, ticker: str, period: str, exchange_info: Dict) -> Optional[pd.DataFrame]:
+        """Try alternative ticker formats for international stocks"""
+        if exchange_info['suffix']:
+            base_ticker = exchange_info['base_ticker']
+            print(f"Trying US format: {base_ticker}")
+            data = self._fetch_direct(base_ticker, period)
+            if data is not None and not data.empty:
+                return data
+        
+        # Try common European suffixes
+        european_suffixes = ['.MI', '.PA', '.DE', '.AS', '.BR', '.IR', '.MC', '.SW', '.L']
+        
+        for suffix in european_suffixes:
+            if not ticker.endswith(suffix):
+                alternative = f"{ticker}{suffix}"
+                print(f"Trying alternative: {alternative}")
+                data = self._fetch_direct(alternative, period)
+                if data is not None and not data.empty:
+                    return data
+        
+        return None
+    
+    async def _get_ticker_info(self, ticker: str, data: pd.DataFrame, original_ticker: str) -> Dict:
+        """Get ticker information"""
+        try:
+            ticker_obj = yf.Ticker(ticker)
+            info = ticker_obj.info
+            
             if not info or 'symbol' not in info:
                 info = {
                     'symbol': original_ticker,
                     'longName': original_ticker,
                     'shortName': original_ticker,
-                    'regularMarketPrice': data['Close'].iloc[-1] if len(data) > 0 else 0,
-                    'currency': self._detect_currency(formatted_ticker),
-                    'marketCap': None
+                    'currency': self._detect_currency(ticker),
+                    'marketCap': None,
+                    'sector': None,
+                    'industry': None,
+                    'country': self._detect_country(ticker),
                 }
             
-            # Ensure required fields exist
             if 'regularMarketPrice' not in info and len(data) > 0:
-                info['regularMarketPrice'] = data['Close'].iloc[-1]
+                info['regularMarketPrice'] = float(data['Close'].iloc[-1])
             
             if 'currency' not in info:
-                info['currency'] = self._detect_currency(formatted_ticker)
+                info['currency'] = self._detect_currency(ticker)
+            
+            if len(data) > 0:
+                latest = data.iloc[-1]
+                info['last_price'] = float(latest['Close'])
+                info['last_volume'] = float(latest.get('Volume', 0))
+                info['last_open'] = float(latest.get('Open', latest['Close']))
+                info['last_high'] = float(latest.get('High', latest['Close']))
+                info['last_low'] = float(latest.get('Low', latest['Close']))
             
             return info
             
         except Exception as e:
             print(f"Warning: Could not get ticker info: {e}")
-            # Return basic info
             return {
                 'symbol': original_ticker,
                 'longName': original_ticker,
                 'shortName': original_ticker,
-                'regularMarketPrice': data['Close'].iloc[-1] if len(data) > 0 else 0,
-                'currency': self._detect_currency(formatted_ticker),
-                'marketCap': None
+                'currency': self._detect_currency(ticker),
+                'last_price': float(data['Close'].iloc[-1]) if len(data) > 0 else 0,
+                'country': self._detect_country(ticker),
             }
     
     def _detect_currency(self, ticker: str) -> str:
-        """Detect currency based on ticker suffix"""
+        """Detect currency based on ticker"""
         ticker_upper = ticker.upper()
         
         currency_map = {
-            '.MI': 'EUR',  # Milan
-            '.DE': 'EUR',  # Germany
-            '.AS': 'EUR',  # Amsterdam
-            '.PA': 'EUR',  # Paris
-            '.BR': 'EUR',  # Brussels
-            '.IR': 'EUR',  # Ireland
-            '.MC': 'EUR',  # Madrid
-            '.SW': 'CHF',  # Switzerland
-            '.L': 'GBP',   # London
-            '.T': 'JPY',   # Tokyo
-            '.HK': 'HKD',  # Hong Kong
+            '.MI': 'EUR', '.PA': 'EUR', '.DE': 'EUR', '.AS': 'EUR',
+            '.BR': 'EUR', '.IR': 'EUR', '.MC': 'EUR', '.SW': 'CHF',
+            '.L': 'GBP', '.T': 'JPY', '.HK': 'HKD', '.SS': 'CNY',
+            '.SZ': 'CNY', '.KS': 'KRW', '.AX': 'AUD', '.V': 'CAD',
+            '.TO': 'CAD', '.CN': 'CAD', '.OL': 'NOK', '.ST': 'SEK',
+            '.CO': 'DKK', '.HE': 'EUR', '.VI': 'EUR',
         }
         
         for suffix, currency in currency_map.items():
@@ -392,200 +431,460 @@ class TradingAnalyzer:
         
         return 'USD'
     
-    def _flatten_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Flatten MultiIndex columns"""
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        return df
+    def _detect_country(self, ticker: str) -> str:
+        """Detect country based on ticker"""
+        ticker_upper = ticker.upper()
+        
+        country_map = {
+            '.MI': 'Italy', '.PA': 'France', '.DE': 'Germany',
+            '.AS': 'Netherlands', '.BR': 'Belgium', '.IR': 'Ireland',
+            '.MC': 'Spain', '.SW': 'Switzerland', '.L': 'UK',
+            '.T': 'Japan', '.HK': 'Hong Kong', '.SS': 'China',
+            '.SZ': 'China', '.KS': 'South Korea', '.AX': 'Australia',
+            '.V': 'Canada', '.TO': 'Canada', '.CN': 'Canada',
+            '.OL': 'Norway', '.ST': 'Sweden', '.CO': 'Denmark',
+            '.HE': 'Finland', '.VI': 'Austria',
+        }
+        
+        for suffix, country in country_map.items():
+            if ticker_upper.endswith(suffix):
+                return country
+        
+        return 'USA'
     
-    def _calculate_complete_indicators(self, data: pd.DataFrame, period: str) -> pd.DataFrame:
-        """Calculate COMPLETE technical indicators including A/D, Stochastic, OBV, etc."""
+    def _calculate_complete_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Calculate ALL technical indicators safely"""
         df = data.copy()
         
-        # Ensure we have required columns
-        required_cols = ['Close', 'High', 'Low', 'Open', 'Volume']
-        for col in required_cols:
-            if col not in df.columns:
-                print(f"Warning: Missing required column: {col}")
-                return df
+        if len(df) < 10:
+            return df
         
-        print(f"Calculating indicators for {len(df)} rows")
-        
-        # Calculate moving averages
-        ma_periods = [9, 20, 50]
-        if period in ['2y', '3y', '5y']:
-            ma_periods.extend([100, 200])
-        
-        for ma in ma_periods:
-            if len(df) >= ma:
+        try:
+            # Ensure all columns are 1D Series
+            for col in ['Close', 'High', 'Low', 'Open', 'Volume']:
+                if col in df.columns:
+                    # Convert to numpy array and ensure 1D
+                    values = df[col].values
+                    if values.ndim > 1:
+                        values = values.flatten()
+                    # Create new Series with proper index
+                    df[col] = pd.Series(values, index=df.index)
+            
+            # Ensure numeric
+            for col in ['Close', 'High', 'Low', 'Open', 'Volume']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Debug: Print data info
+            print(f"📊 Data shape: {df.shape}")
+            print(f"📊 Columns: {list(df.columns[:10])}")
+            
+            # Price transformations
+            df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
+            df['Weighted_Close'] = (df['Close'] * 2 + df['High'] + df['Low']) / 4
+            
+            # Moving Averages
+            for period in [5, 9, 20, 50, 100, 200]:
+                if len(df) >= period:
+                    df[f'SMA_{period}'] = df['Close'].rolling(window=period).mean()
+                    df[f'EMA_{period}'] = df['Close'].ewm(span=period, adjust=False).mean()
+                    # Also calculate for typical price
+                    df[f'TP_SMA_{period}'] = df['Typical_Price'].rolling(window=period).mean()
+            
+            # MACD
+            if len(df) >= 26:
                 try:
-                    # Simple Moving Average
-                    df[f'SMA_{ma}'] = ta.trend.SMAIndicator(df['Close'], window=ma).sma_indicator().ffill()
-                    
-                    # Exponential Moving Average
-                    df[f'EMA_{ma}'] = ta.trend.EMAIndicator(df['Close'], window=ma).ema_indicator().ffill()
+                    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+                    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+                    df['MACD'] = exp1 - exp2
+                    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+                    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+                    df['MACD_Hist_Color'] = np.where(df['MACD_Hist'] >= 0, 'green', 'red')
+                    print(f"✅ MACD calculated: {df['MACD'].iloc[-1]:.4f}")
                 except Exception as e:
-                    print(f"Error calculating MA {ma}: {e}")
-                    df[f'SMA_{ma}'] = np.nan
-                    df[f'EMA_{ma}'] = np.nan
-        
-        # Calculate RSI
-        if len(df) >= 14:
-            try:
-                df['RSI'] = ta.momentum.RSIIndicator(df['Close'], window=14).rsi().ffill()
-            except Exception as e:
-                print(f"Error calculating RSI: {e}")
-                df['RSI'] = np.nan
-        
-        # Calculate MACD
-        if len(df) >= 26:
-            try:
-                macd = ta.trend.MACD(df['Close'])
-                df['MACD'] = macd.macd().ffill()
-                df['MACD_Signal'] = macd.macd_signal().ffill()
-                df['MACD_Hist'] = macd.macd_diff().ffill()
-            except Exception as e:
-                print(f"Error calculating MACD: {e}")
-                df['MACD'] = np.nan
-                df['MACD_Signal'] = np.nan
-                df['MACD_Hist'] = np.nan
-        
-        # Calculate Bollinger Bands
-        if len(df) >= 20:
-            try:
-                bb = ta.volatility.BollingerBands(df['Close'])
-                df['BB_Upper'] = bb.bollinger_hband().ffill()
-                df['BB_Middle'] = bb.bollinger_mavg().ffill()
-                df['BB_Lower'] = bb.bollinger_lband().ffill()
-                df['BB_Width'] = ((df['BB_Upper'] - df['BB_Lower']) / df['BB_Middle']) * 100
-            except Exception as e:
-                print(f"Error calculating Bollinger Bands: {e}")
-                df['BB_Upper'] = np.nan
-                df['BB_Middle'] = np.nan
-                df['BB_Lower'] = np.nan
-                df['BB_Width'] = np.nan
-        
-        # Calculate A/D Line (Accumulation/Distribution) - IMPORTANT!
-        try:
-            # Money Flow Multiplier
-            mfm = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
-            mfm = mfm.replace([np.inf, -np.inf], 0).fillna(0)
+                    print(f"MACD calculation error: {e}")
+                    df['MACD'] = 0
+                    df['MACD_Signal'] = 0
+                    df['MACD_Hist'] = 0
+                    df['MACD_Hist_Color'] = 'gray'
             
-            # Money Flow Volume
-            mfv = mfm * df['Volume']
+            # RSI
+            if len(df) >= 14:
+                try:
+                    delta = df['Close'].diff()
+                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                    rs = gain / loss
+                    df['RSI'] = 100 - (100 / (1 + rs))
+                    df['RSI'] = df['RSI'].fillna(50)
+                    print(f"✅ RSI calculated: {df['RSI'].iloc[-1]:.1f}")
+                except Exception as e:
+                    print(f"RSI calculation error: {e}")
+                    df['RSI'] = 50
             
-            # Accumulation/Distribution Line
-            df['AD_Line'] = mfv.cumsum().ffill()
+            # Stochastic
+            if len(df) >= 14:
+                try:
+                    low_14 = df['Low'].rolling(window=14).min()
+                    high_14 = df['High'].rolling(window=14).max()
+                    df['Stoch_%K'] = 100 * ((df['Close'] - low_14) / (high_14 - low_14))
+                    df['Stoch_%D'] = df['Stoch_%K'].rolling(window=3).mean()
+                    df['Stoch_%K'] = df['Stoch_%K'].fillna(50)
+                    df['Stoch_%D'] = df['Stoch_%D'].fillna(50)
+                    print(f"✅ Stochastic calculated: K={df['Stoch_%K'].iloc[-1]:.1f}, D={df['Stoch_%D'].iloc[-1]:.1f}")
+                except Exception as e:
+                    print(f"Stochastic calculation error: {e}")
+                    df['Stoch_%K'] = 50
+                    df['Stoch_%D'] = 50
             
-            # AD Line Moving Average (20 period)
-            df['AD_MA_20'] = df['AD_Line'].rolling(window=20, min_periods=1).mean().ffill()
+            # Williams %R
+            if len(df) >= 14:
+                try:
+                    highest_high = df['High'].rolling(window=14).max()
+                    lowest_low = df['Low'].rolling(window=14).min()
+                    df['Williams_%R'] = -100 * ((highest_high - df['Close']) / (highest_high - lowest_low))
+                    df['Williams_%R'] = df['Williams_%R'].fillna(-50)
+                    print(f"✅ Williams %R calculated: {df['Williams_%R'].iloc[-1]:.1f}")
+                except Exception as e:
+                    print(f"Williams %R calculation error: {e}")
+                    df['Williams_%R'] = -50
             
-            print(f"A/D Line calculated successfully, range: {df['AD_Line'].min():.0f} to {df['AD_Line'].max():.0f}")
+            # ROC
+            for period in [12, 14, 26]:
+                if len(df) >= period:
+                    df[f'ROC_{period}'] = ((df['Close'] - df['Close'].shift(period)) / df['Close'].shift(period)) * 100
+                    df[f'ROC_{period}'] = df[f'ROC_{period}'].fillna(0)
+            
+            # CCI
+            if len(df) >= 20:
+                try:
+                    typical_price = df['Typical_Price']
+                    sma = typical_price.rolling(window=20).mean()
+                    mad = typical_price.rolling(window=20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+                    df['CCI'] = (typical_price - sma) / (0.015 * mad)
+                    df['CCI'] = df['CCI'].fillna(0)
+                except Exception as e:
+                    print(f"CCI calculation error: {e}")
+                    df['CCI'] = 0
+            
+            # Money Flow Index
+            if len(df) >= 14 and 'Volume' in df.columns:
+                try:
+                    typical_price = df['Typical_Price']
+                    money_flow = typical_price * df['Volume']
+                    
+                    # Positive and negative money flow
+                    positive_flow = np.where(typical_price > typical_price.shift(1), money_flow, 0)
+                    negative_flow = np.where(typical_price < typical_price.shift(1), money_flow, 0)
+                    
+                    positive_mf = pd.Series(positive_flow, index=df.index).rolling(window=14).sum()
+                    negative_mf = pd.Series(negative_flow, index=df.index).rolling(window=14).sum()
+                    
+                    money_ratio = positive_mf / negative_mf
+                    df['MFI'] = 100 - (100 / (1 + money_ratio))
+                    df['MFI'] = df['MFI'].fillna(50)
+                except Exception as e:
+                    print(f"MFI calculation error: {e}")
+                    df['MFI'] = 50
+            
+            # Volume indicators
+            if 'Volume' in df.columns:
+                try:
+                    # OBV
+                    obv = np.zeros(len(df))
+                    for i in range(1, len(df)):
+                        if df['Close'].iloc[i] > df['Close'].iloc[i-1]:
+                            obv[i] = obv[i-1] + df['Volume'].iloc[i]
+                        elif df['Close'].iloc[i] < df['Close'].iloc[i-1]:
+                            obv[i] = obv[i-1] - df['Volume'].iloc[i]
+                        else:
+                            obv[i] = obv[i-1]
+                    df['OBV'] = obv
+                    
+                    # A/D Line (Accumulation/Distribution)
+                    clv = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
+                    clv = clv.fillna(0)
+                    df['AD_Line'] = (clv * df['Volume']).cumsum()
+                    
+                    # Volume MA and ratio
+                    df['Volume_MA_20'] = df['Volume'].rolling(window=20).mean()
+                    df['Volume_Ratio'] = df['Volume'] / df['Volume_MA_20'].replace(0, 1)
+                    df['Volume_Ratio'] = df['Volume_Ratio'].fillna(1)
+                    
+                    # Volume Price Trend
+                    df['VPT'] = df['Volume'] * ((df['Close'] - df['Close'].shift(1)) / df['Close'].shift(1))
+                    df['VPT'] = df['VPT'].fillna(0).cumsum()
+                    
+                    print(f"✅ Volume indicators calculated: OBV={df['OBV'].iloc[-1]:.0f}, AD={df['AD_Line'].iloc[-1]:.0f}")
+                except Exception as e:
+                    print(f"Volume indicators error: {e}")
+                    df['OBV'] = 0
+                    df['AD_Line'] = 0
+                    df['VPT'] = 0
+                    df['Volume_MA_20'] = df['Volume']
+                    df['Volume_Ratio'] = 1
+            
+            # Bollinger Bands
+            if len(df) >= 20:
+                try:
+                    df['BB_Middle'] = df['Close'].rolling(20).mean()
+                    bb_std = df['Close'].rolling(20).std()
+                    df['BB_Upper'] = df['BB_Middle'] + (bb_std * 2)
+                    df['BB_Lower'] = df['BB_Middle'] - (bb_std * 2)
+                    df['BB_Width'] = ((df['BB_Upper'] - df['BB_Lower']) / df['BB_Middle']) * 100
+                    df['BB_%B'] = (df['Close'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'])
+                    
+                    # Handle division by zero
+                    df['BB_%B'] = df['BB_%B'].fillna(0.5)
+                    df['BB_Width'] = df['BB_Width'].fillna(0)
+                except Exception as e:
+                    print(f"Bollinger Bands error: {e}")
+                    df['BB_Middle'] = df['Close']
+                    df['BB_Upper'] = df['Close']
+                    df['BB_Lower'] = df['Close']
+                    df['BB_Width'] = 0
+                    df['BB_%B'] = 0.5
+            
+            # ATR
+            if len(df) >= 14:
+                try:
+                    high_low = df['High'] - df['Low']
+                    high_close = np.abs(df['High'] - df['Close'].shift())
+                    low_close = np.abs(df['Low'] - df['Close'].shift())
+                    
+                    ranges = pd.DataFrame({
+                        'high_low': high_low,
+                        'high_close': high_close,
+                        'low_close': low_close
+                    })
+                    
+                    true_range = ranges.max(axis=1)
+                    df['ATR'] = true_range.rolling(window=14).mean()
+                    df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
+                    df['ATR_Pct'] = df['ATR_Pct'].fillna(1)
+                except Exception as e:
+                    print(f"ATR calculation error: {e}")
+                    df['ATR'] = 0
+                    df['ATR_Pct'] = 1
+            
+            # Performance metrics
+            df['Daily_Return'] = df['Close'].pct_change().fillna(0)
+            df['Cumulative_Return'] = (1 + df['Daily_Return']).cumprod() - 1
+            
+            df['Volatility_20d'] = df['Daily_Return'].rolling(20).std() * np.sqrt(252)
+            df['Volatility_60d'] = df['Daily_Return'].rolling(60).std() * np.sqrt(252)
+            
+            # Parabolic SAR (simplified)
+            if len(df) >= 10:
+                try:
+                    df['SAR'] = df['Close'].rolling(10).mean()
+                except:
+                    df['SAR'] = df['Close']
+            
+            # Fill NaN values
+            df = df.fillna(method='ffill').fillna(method='bfill')
+            
+            # Debug: Print some indicator values
+            if len(df) > 0:
+                last_row = df.iloc[-1]
+                print(f"📊 Last row indicators:")
+                print(f"  Close: {last_row.get('Close', 0):.2f}")
+                print(f"  RSI: {last_row.get('RSI', 0):.1f}")
+                print(f"  MACD: {last_row.get('MACD', 0):.4f}")
+                print(f"  Volume Ratio: {last_row.get('Volume_Ratio', 0):.2f}")
+                print(f"  A/D Line: {last_row.get('AD_Line', 0):.0f}")
+            
+            indicator_count = len([col for col in df.columns if 'Unnamed' not in str(col)])
+            print(f"✅ Calculated {indicator_count} indicators")
+            
         except Exception as e:
-            print(f"Error calculating A/D Line: {e}")
-            df['AD_Line'] = 0
-            df['AD_MA_20'] = np.nan
-        
-        # Calculate Stochastic Oscillator
-        if len(df) >= 14:
-            try:
-                stoch = ta.momentum.StochasticOscillator(
-                    high=df['High'],
-                    low=df['Low'],
-                    close=df['Close'],
-                    window=14,
-                    smooth_window=3
-                )
-                df['Stoch_%K'] = stoch.stoch().ffill()
-                df['Stoch_%D'] = stoch.stoch_signal().ffill()
-            except Exception as e:
-                print(f"Error calculating Stochastic: {e}")
-                df['Stoch_%K'] = np.nan
-                df['Stoch_%D'] = np.nan
-        
-        # Calculate On-Balance Volume (OBV)
-        try:
-            df['OBV'] = ta.volume.OnBalanceVolumeIndicator(
-                close=df['Close'],
-                volume=df['Volume']
-            ).on_balance_volume().ffill()
-        except Exception as e:
-            print(f"Error calculating OBV: {e}")
-            df['OBV'] = 0
-        
-        # Calculate Average True Range (ATR) for volatility
-        if len(df) >= 14:
-            try:
-                df['ATR'] = ta.volatility.AverageTrueRange(
-                    high=df['High'],
-                    low=df['Low'],
-                    close=df['Close'],
-                    window=14
-                ).average_true_range().ffill()
-                
-                # ATR as percentage of price
-                df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
-            except Exception as e:
-                print(f"Error calculating ATR: {e}")
-                df['ATR'] = np.nan
-                df['ATR_Pct'] = np.nan
-        
-        # Calculate Volume indicators
-        try:
-            df['Volume_MA_20'] = df['Volume'].rolling(window=20, min_periods=1).mean().ffill()
-            df['Volume_Ratio'] = (df['Volume'] / df['Volume_MA_20']).ffill()
-            
-            # Volume Weighted Average Price
-            df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
-        except Exception as e:
-            print(f"Error calculating volume indicators: {e}")
-            df['Volume_MA_20'] = np.nan
-            df['Volume_Ratio'] = np.nan
-            df['VWAP'] = np.nan
-        
-        # Calculate Price Rate of Change (ROC)
-        if len(df) >= 12:
-            try:
-                df['ROC_12'] = ta.momentum.ROCIndicator(df['Close'], window=12).roc().ffill()
-            except Exception as e:
-                print(f"Error calculating ROC: {e}")
-                df['ROC_12'] = np.nan
-        
-        # Calculate Williams %R
-        if len(df) >= 14:
-            try:
-                df['Williams_%R'] = ta.momentum.WilliamsRIndicator(
-                    high=df['High'],
-                    low=df['Low'],
-                    close=df['Close'],
-                    lbp=14
-                ).williams_r().ffill()
-            except Exception as e:
-                print(f"Error calculating Williams %R: {e}")
-                df['Williams_%R'] = np.nan
-        
-        # Calculate Commodity Channel Index (CCI)
-        if len(df) >= 20:
-            try:
-                df['CCI'] = ta.trend.CCIIndicator(
-                    high=df['High'],
-                    low=df['Low'],
-                    close=df['Close'],
-                    window=20
-                ).cci().ffill()
-            except Exception as e:
-                print(f"Error calculating CCI: {e}")
-                df['CCI'] = np.nan
-        
-        # Fill any remaining NaN values
-        df = df.ffill()
-        
-        print(f"✅ Indicators calculated successfully")
+            print(f"⚠️ Indicator calculation error: {e}")
+            import traceback
+            traceback.print_exc()
         
         return df
     
+    def _generate_all_signals(self, data: pd.DataFrame) -> List[Dict]:
+        """Generate signals from all indicators"""
+        signals = []
+        
+        if len(data) < 10:
+            print("⚠️ Not enough data for signals")
+            return signals
+        
+        try:
+            # Get scalar values from last row
+            last_idx = len(data) - 1
+            prev_idx = last_idx - 1 if last_idx > 0 else last_idx
+            
+            # Helper function to safely get scalar values
+            def get_scalar(column, idx):
+                try:
+                    val = data[column].iloc[idx]
+                    if pd.isna(val):
+                        return None
+                    return float(val)
+                except:
+                    return None
+            
+            # Get current and previous values
+            close = get_scalar('Close', last_idx)
+            
+            # === TREND SIGNALS ===
+            # Golden/Death Cross
+            sma50 = get_scalar('SMA_50', last_idx)
+            sma200 = get_scalar('SMA_200', last_idx)
+            prev_sma50 = get_scalar('SMA_50', prev_idx)
+            prev_sma200 = get_scalar('SMA_200', prev_idx)
+            
+            if all(v is not None for v in [sma50, sma200, prev_sma50, prev_sma200]):
+                if prev_sma50 <= prev_sma200 and sma50 > sma200:
+                    signals.append({'type': 'GOLDEN_CROSS', 'strength': 'STRONG', 'direction': 'BULLISH'})
+                    print("✅ Signal: GOLDEN_CROSS")
+                elif prev_sma50 >= prev_sma200 and sma50 < sma200:
+                    signals.append({'type': 'DEATH_CROSS', 'strength': 'STRONG', 'direction': 'BEARISH'})
+                    print("✅ Signal: DEATH_CROSS")
+            
+            # Price vs Moving Averages
+            if close is not None:
+                for period in [20, 50, 200]:
+                    sma = get_scalar(f'SMA_{period}', last_idx)
+                    ema = get_scalar(f'EMA_{period}', last_idx)
+                    if sma is not None:
+                        if close > sma:
+                            signals.append({'type': f'ABOVE_{period}SMA', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                        else:
+                            signals.append({'type': f'BELOW_{period}SMA', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+                    if ema is not None:
+                        if close > ema:
+                            signals.append({'type': f'ABOVE_{period}EMA', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                        else:
+                            signals.append({'type': f'BELOW_{period}EMA', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # === MOMENTUM SIGNALS ===
+            # RSI
+            rsi = get_scalar('RSI', last_idx)
+            if rsi is not None:
+                if rsi < 30:
+                    signals.append({'type': 'RSI_OVERSOLD', 'strength': 'STRONG', 'direction': 'BULLISH'})
+                    print("✅ Signal: RSI_OVERSOLD")
+                elif rsi > 70:
+                    signals.append({'type': 'RSI_OVERBOUGHT', 'strength': 'STRONG', 'direction': 'BEARISH'})
+                    print("✅ Signal: RSI_OVERBOUGHT")
+                elif rsi < 35:
+                    signals.append({'type': 'RSI_NEAR_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                elif rsi > 65:
+                    signals.append({'type': 'RSI_NEAR_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # MACD
+            macd = get_scalar('MACD', last_idx)
+            signal = get_scalar('MACD_Signal', last_idx)
+            prev_macd = get_scalar('MACD', prev_idx)
+            prev_signal = get_scalar('MACD_Signal', prev_idx)
+            
+            if all(v is not None for v in [macd, signal, prev_macd, prev_signal]):
+                if prev_macd <= prev_signal and macd > signal:
+                    signals.append({'type': 'MACD_BULLISH_CROSS', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                    print("✅ Signal: MACD_BULLISH_CROSS")
+                elif prev_macd >= prev_signal and macd < signal:
+                    signals.append({'type': 'MACD_BEARISH_CROSS', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+                    print("✅ Signal: MACD_BEARISH_CROSS")
+                
+                if macd > signal:
+                    signals.append({'type': 'MACD_ABOVE_SIGNAL', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                else:
+                    signals.append({'type': 'MACD_BELOW_SIGNAL', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # Stochastic
+            stoch_k = get_scalar('Stoch_%K', last_idx)
+            stoch_d = get_scalar('Stoch_%D', last_idx)
+            if stoch_k is not None and stoch_d is not None:
+                if stoch_k < 20 and stoch_d < 20:
+                    signals.append({'type': 'STOCH_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                    print("✅ Signal: STOCH_OVERSOLD")
+                elif stoch_k > 80 and stoch_d > 80:
+                    signals.append({'type': 'STOCH_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+                    print("✅ Signal: STOCH_OVERBOUGHT")
+            
+            # Williams %R
+            williams = get_scalar('Williams_%R', last_idx)
+            if williams is not None:
+                if williams < -80:
+                    signals.append({'type': 'WILLIAMS_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                    print("✅ Signal: WILLIAMS_OVERSOLD")
+                elif williams > -20:
+                    signals.append({'type': 'WILLIAMS_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+                    print("✅ Signal: WILLIAMS_OVERBOUGHT")
+            
+            # CCI
+            cci = get_scalar('CCI', last_idx)
+            if cci is not None:
+                if cci < -100:
+                    signals.append({'type': 'CCI_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                    print("✅ Signal: CCI_OVERSOLD")
+                elif cci > 100:
+                    signals.append({'type': 'CCI_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+                    print("✅ Signal: CCI_OVERBOUGHT")
+            
+            # MFI
+            mfi = get_scalar('MFI', last_idx)
+            if mfi is not None:
+                if mfi < 20:
+                    signals.append({'type': 'MFI_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                elif mfi > 80:
+                    signals.append({'type': 'MFI_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # === VOLUME SIGNALS ===
+            vol_ratio = get_scalar('Volume_Ratio', last_idx)
+            if vol_ratio is not None:
+                if vol_ratio > 2.0:
+                    signals.append({'type': 'HIGH_VOLUME', 'strength': 'STRONG', 'direction': 'NEUTRAL'})
+                    print("✅ Signal: HIGH_VOLUME")
+                elif vol_ratio > 1.5:
+                    signals.append({'type': 'ABOVE_AVG_VOLUME', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
+            
+            # A/D Line trending
+            ad_line = get_scalar('AD_Line', last_idx)
+            if ad_line is not None:
+                prev_ad = get_scalar('AD_Line', prev_idx)
+                if prev_ad is not None and ad_line > prev_ad:
+                    signals.append({'type': 'AD_BULLISH', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                elif prev_ad is not None and ad_line < prev_ad:
+                    signals.append({'type': 'AD_BEARISH', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # === VOLATILITY SIGNALS ===
+            bb_percent = get_scalar('BB_%B', last_idx)
+            if bb_percent is not None:
+                if bb_percent < 0.2:
+                    signals.append({'type': 'BB_OVERSOLD', 'strength': 'STRONG', 'direction': 'BULLISH'})
+                    print("✅ Signal: BB_OVERSOLD")
+                elif bb_percent > 0.8:
+                    signals.append({'type': 'BB_OVERBOUGHT', 'strength': 'STRONG', 'direction': 'BEARISH'})
+                    print("✅ Signal: BB_OVERBOUGHT")
+            
+            bb_width = get_scalar('BB_Width', last_idx)
+            if bb_width is not None:
+                if bb_width < 5:
+                    signals.append({'type': 'BB_SQUEEZE', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
+                    print("✅ Signal: BB_SQUEEZE")
+            
+            atr_pct = get_scalar('ATR_Pct', last_idx)
+            if atr_pct is not None:
+                if atr_pct > 3:
+                    signals.append({'type': 'HIGH_VOLATILITY', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
+                    print("✅ Signal: HIGH_VOLATILITY")
+            
+            print(f"✅ Generated {len(signals)} signals")
+            
+        except Exception as e:
+            print(f"⚠️ Signal generation error: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return signals
+    
     def _detect_reversal_patterns(self, data: pd.DataFrame) -> Dict:
-        """Detect specific reversal patterns in the data"""
+        """Detect reversal patterns"""
         patterns = {
             'bullish_reversal': False,
             'bearish_reversal': False,
@@ -594,905 +893,623 @@ class TradingAnalyzer:
             'details': {}
         }
         
-        if len(data) < 10:
+        if len(data) < 20:
             return patterns
         
         try:
-            # Get recent data (last 20 periods for better detection)
-            recent = data.tail(20).copy()
-            latest = recent.iloc[-1]
+            # Get scalar values
+            last_idx = len(data) - 1
             
-            # Check for bullish reversal pattern
-            bullish_signals = []
-            
-            # 1. Price touching lower Bollinger Band
-            if 'BB_Lower' in recent.columns and 'BB_Upper' in recent.columns:
+            # Helper function
+            def get_scalar(column, idx):
                 try:
-                    bb_position = (latest['Close'] - latest['BB_Lower']) / (latest['BB_Upper'] - latest['BB_Lower'])
-                    if bb_position < 0.1:  # Price in lower 10% of BB
-                        bullish_signals.append(f"Price near lower Bollinger Band ({bb_position*100:.1f}% position)")
-                        patterns['details']['bb_position'] = bb_position
+                    val = data[column].iloc[idx]
+                    if pd.isna(val):
+                        return None
+                    return float(val)
                 except:
-                    pass
+                    return None
             
-            # 2. A/D Line bullish divergence
-            if 'AD_Line' in recent.columns and len(recent) >= 5:
-                try:
-                    price_min_idx = recent['Close'].tail(5).idxmin()
-                    ad_at_price_min = recent.loc[price_min_idx, 'AD_Line']
-                    ad_current = latest['AD_Line']
-                    
-                    if ad_current > ad_at_price_min:
-                        bullish_signals.append("A/D Line showing bullish divergence")
-                        patterns['details']['ad_divergence'] = True
-                except:
-                    pass
+            # === BULLISH REVERSAL PATTERNS ===
+            bullish_count = 0
+            bullish_details = []
             
-            # 3. RSI oversold with bullish divergence
-            if 'RSI' in recent.columns and len(recent) >= 5:
-                try:
-                    rsi_current = latest['RSI']
-                    if pd.isna(rsi_current):
-                        pass
-                    else:
-                        rsi_oversold = rsi_current < self.config.REVERSAL_SETTINGS['rsi_oversold']
-                        
-                        price_min_idx = recent['Close'].tail(5).idxmin()
-                        rsi_at_price_min = recent.loc[price_min_idx, 'RSI']
-                        
-                        if rsi_oversold and rsi_current > rsi_at_price_min:
-                            bullish_signals.append(f"RSI oversold ({rsi_current:.1f}) with bullish divergence")
-                            patterns['details']['rsi_divergence'] = True
-                            patterns['details']['rsi_value'] = rsi_current
-                except:
-                    pass
+            # RSI oversold
+            rsi = get_scalar('RSI', last_idx)
+            if rsi is not None and rsi < 30:
+                bullish_count += 1
+                bullish_details.append(f"RSI oversold ({rsi:.1f})")
             
-            # 4. MACD histogram showing shrinking negative bars
-            if 'MACD_Hist' in recent.columns and len(recent) >= 3:
-                try:
-                    hist_values = recent['MACD_Hist'].tail(3).values
-                    if all(not pd.isna(h) and h < 0 for h in hist_values) and hist_values[-1] > hist_values[0]:
-                        bullish_signals.append("MACD histogram showing shrinking negative bars")
-                        patterns['details']['macd_hist_shrinking'] = True
-                except:
-                    pass
+            # Stochastic oversold
+            stoch_k = get_scalar('Stoch_%K', last_idx)
+            stoch_d = get_scalar('Stoch_%D', last_idx)
+            if stoch_k is not None and stoch_d is not None and stoch_k < 20 and stoch_d < 20:
+                bullish_count += 1
+                bullish_details.append(f"Stochastic oversold")
             
-            # 5. Volume spike on low day
-            if 'Volume_Ratio' in recent.columns:
-                try:
-                    min_price_idx = recent['Close'].idxmin()
-                    volume_ratio_at_low = recent.loc[min_price_idx, 'Volume_Ratio']
-                    
-                    if not pd.isna(volume_ratio_at_low) and volume_ratio_at_low > self.config.REVERSAL_SETTINGS['volume_spike_threshold']:
-                        bullish_signals.append(f"Volume spike ({volume_ratio_at_low:.1f}x) on low day")
-                        patterns['details']['volume_spike'] = volume_ratio_at_low
-                except:
-                    pass
+            # Bollinger Bands oversold
+            bb_percent = get_scalar('BB_%B', last_idx)
+            if bb_percent is not None and bb_percent < 0.2:
+                bullish_count += 1
+                bullish_details.append(f"BB position: {bb_percent*100:.1f}% (oversold)")
             
-            # 6. Stochastic oversold
-            if 'Stoch_%K' in recent.columns and 'Stoch_%D' in recent.columns:
-                try:
-                    stoch_k = latest['Stoch_%K']
-                    stoch_d = latest['Stoch_%D']
-                    if not pd.isna(stoch_k) and not pd.isna(stoch_d):
-                        if stoch_k < 20 and stoch_d < 20:
-                            bullish_signals.append(f"Stochastic oversold (K={stoch_k:.1f}, D={stoch_d:.1f})")
-                except:
-                    pass
+            # Williams %R oversold
+            williams = get_scalar('Williams_%R', last_idx)
+            if williams is not None and williams < -80:
+                bullish_count += 1
+                bullish_details.append(f"Williams %R oversold ({williams:.1f})")
             
-            # 7. OBV bullish divergence
-            if 'OBV' in recent.columns and len(recent) >= 5:
-                try:
-                    price_min_idx = recent['Close'].tail(5).idxmin()
-                    obv_at_price_min = recent.loc[price_min_idx, 'OBV']
-                    obv_current = latest['OBV']
-                    
-                    if obv_current > obv_at_price_min:
-                        bullish_signals.append("OBV showing bullish divergence")
-                except:
-                    pass
+            # MFI oversold
+            mfi = get_scalar('MFI', last_idx)
+            if mfi is not None and mfi < 20:
+                bullish_count += 1
+                bullish_details.append(f"MFI oversold ({mfi:.1f})")
             
-            # Determine if bullish reversal pattern is present
-            if len(bullish_signals) >= 3:
+            # Determine bullish reversal
+            if bullish_count >= 2:
                 patterns['bullish_reversal'] = True
-                patterns['confidence'] = min(100, len(bullish_signals) * 20)
-                patterns['signals'] = bullish_signals
+                patterns['confidence'] = min(95, bullish_count * 25)
+                patterns['signals'] = bullish_details
+                patterns['details']['bullish_count'] = bullish_count
+                print(f"✅ Bullish reversal detected ({bullish_count} signals)")
             
-            # Check for bearish reversal pattern
-            bearish_signals = []
+            # === BEARISH REVERSAL PATTERNS ===
+            bearish_count = 0
+            bearish_details = []
             
-            if 'RSI' in recent.columns:
-                try:
-                    rsi_value = latest['RSI']
-                    if not pd.isna(rsi_value) and rsi_value > self.config.REVERSAL_SETTINGS['rsi_overbought']:
-                        bearish_signals.append(f"RSI overbought ({rsi_value:.1f})")
-                except:
-                    pass
+            # RSI overbought
+            if rsi is not None and rsi > 70:
+                bearish_count += 1
+                bearish_details.append(f"RSI overbought ({rsi:.1f})")
             
-            if 'BB_Upper' in recent.columns:
-                try:
-                    bb_position = (latest['Close'] - latest['BB_Lower']) / (latest['BB_Upper'] - latest['BB_Lower'])
-                    if bb_position > 0.9:
-                        bearish_signals.append(f"Price near upper Bollinger Band ({bb_position*100:.1f}% position)")
-                except:
-                    pass
+            # Stochastic overbought
+            if stoch_k is not None and stoch_d is not None and stoch_k > 80 and stoch_d > 80:
+                bearish_count += 1
+                bearish_details.append(f"Stochastic overbought")
             
-            if 'MACD' in recent.columns and 'MACD_Signal' in recent.columns:
-                try:
-                    macd_val = latest['MACD']
-                    signal_val = latest['MACD_Signal']
-                    if not pd.isna(macd_val) and not pd.isna(signal_val) and macd_val < signal_val:
-                        bearish_signals.append("MACD bearish crossover")
-                except:
-                    pass
+            # Bollinger Bands overbought
+            if bb_percent is not None and bb_percent > 0.8:
+                bearish_count += 1
+                bearish_details.append(f"BB position: {bb_percent*100:.1f}% (overbought)")
             
-            if 'Stoch_%K' in recent.columns and 'Stoch_%D' in recent.columns:
-                try:
-                    stoch_k = latest['Stoch_%K']
-                    stoch_d = latest['Stoch_%D']
-                    if not pd.isna(stoch_k) and not pd.isna(stoch_d):
-                        if stoch_k > 80 and stoch_d > 80:
-                            bearish_signals.append(f"Stochastic overbought (K={stoch_k:.1f}, D={stoch_d:.1f})")
-                except:
-                    pass
+            # Williams %R overbought
+            if williams is not None and williams > -20:
+                bearish_count += 1
+                bearish_details.append(f"Williams %R overbought ({williams:.1f})")
             
-            if 'Williams_%R' in recent.columns:
-                try:
-                    williams_r = latest['Williams_%R']
-                    if not pd.isna(williams_r) and williams_r > -20:
-                        bearish_signals.append(f"Williams %R overbought ({williams_r:.1f})")
-                except:
-                    pass
+            # MFI overbought
+            if mfi is not None and mfi > 80:
+                bearish_count += 1
+                bearish_details.append(f"MFI overbought ({mfi:.1f})")
             
-            if len(bearish_signals) >= 2:
+            # Determine bearish reversal
+            if bearish_count >= 2:
                 patterns['bearish_reversal'] = True
-                patterns['confidence'] = max(patterns['confidence'], len(bearish_signals) * 25)
-                patterns['signals'].extend(bearish_signals)
-        
+                patterns['confidence'] = max(patterns['confidence'], min(95, bearish_count * 25))
+                patterns['signals'].extend(bearish_details)
+                patterns['details']['bearish_count'] = bearish_count
+                print(f"✅ Bearish reversal detected ({bearish_count} signals)")
+            
         except Exception as e:
-            print(f"Error detecting reversal patterns: {e}")
+            print(f"⚠️ Reversal pattern error: {e}")
+            import traceback
+            traceback.print_exc()
         
         return patterns
     
-    def _analyze_fundamentals(self, info: Dict) -> Dict:
-        """Comprehensive fundamental data analysis"""
-        fundamental = {
-            'valuation': {},
-            'profitability': {},
-            'growth': {},
-            'financial_health': {},
-            'dividends': {},
-            'efficiency': {},
-            'cash_flow': {},
-            'analyst_data': {},
-            'score': 50,
-            'grade': 'C'
+    def _detect_divergences(self, data: pd.DataFrame, lookback: int = 30) -> Dict:
+        """Detect divergences between price and indicators"""
+        divergences = {
+            'bullish_rsi': False,
+            'bearish_rsi': False,
+            'bullish_macd': False,
+            'bearish_macd': False,
+            'bullish_ad': False,
+            'bearish_ad': False,
+            'bullish_obv': False,
+            'bearish_obv': False,
+            'details': []
         }
         
+        if len(data) < lookback + 5:
+            return divergences
+        
         try:
-            # VALUATION METRICS
-            fundamental['valuation'] = {
-                'pe_ratio': info.get('trailingPE', np.nan),
-                'forward_pe': info.get('forwardPE', np.nan),
-                'price_to_book': info.get('priceToBook', np.nan),
-                'price_to_sales': info.get('priceToSalesTrailing12Months', np.nan),
-                'peg_ratio': info.get('pegRatio', np.nan),
-                'market_cap': info.get('marketCap', np.nan),
-                'enterprise_value': info.get('enterpriseValue', np.nan),
-                'ev_to_ebitda': info.get('enterpriseToEbitda', np.nan),
-                'ev_to_revenue': info.get('enterpriseToRevenue', np.nan)
-            }
+            recent = data.iloc[-lookback:].copy()
             
-            # PROFITABILITY
-            fundamental['profitability'] = {
-                'roe': info.get('returnOnEquity', np.nan),
-                'roa': info.get('returnOnAssets', np.nan),
-                'roic': info.get('returnOnInvestedCapital', np.nan),
-                'profit_margin': info.get('profitMargins', np.nan),
-                'operating_margin': info.get('operatingMargins', np.nan),
-                'gross_margin': info.get('grossMargins', np.nan),
-                'ebitda_margin': info.get('ebitdaMargins', np.nan)
-            }
+            # Get arrays
+            price = recent['Close'].values
+            rsi = recent['RSI'].values if 'RSI' in recent.columns else None
+            macd = recent['MACD'].values if 'MACD' in recent.columns else None
+            ad_line = recent['AD_Line'].values if 'AD_Line' in recent.columns else None
+            obv = recent['OBV'].values if 'OBV' in recent.columns else None
             
-            # GROWTH
-            fundamental['growth'] = {
-                'revenue_growth': info.get('revenueGrowth', np.nan),
-                'earnings_growth': info.get('earningsGrowth', np.nan),
-                'eps_growth': info.get('earningsQuarterlyGrowth', np.nan),
-                'five_year_rev_growth': info.get('revenuePerShareGrowth', np.nan),
-                'five_year_eps_growth': info.get('earningsPerShareGrowth', np.nan),
-                'quarterly_rev_growth': info.get('quarterlyRevenueGrowth', np.nan),
-                'quarterly_earnings_growth': info.get('quarterlyEarningsGrowth', np.nan)
-            }
+            # Simple divergence detection (last 20 periods)
+            if rsi is not None and len(price) >= 20:
+                # Find peaks and troughs
+                price_slice = price[-20:]
+                rsi_slice = rsi[-20:]
+                
+                price_min_idx = np.argmin(price_slice) + len(price) - 20
+                price_max_idx = np.argmax(price_slice) + len(price) - 20
+                
+                rsi_min_idx = np.argmin(rsi_slice) + len(rsi) - 20
+                rsi_max_idx = np.argmax(rsi_slice) + len(rsi) - 20
+                
+                # Bullish divergence: price lower low, RSI higher low
+                if price_min_idx > len(price) - 10 and rsi_min_idx > len(rsi) - 10:
+                    if price_slice.min() < price_slice[:10].min() and rsi_slice.min() > rsi_slice[:10].min():
+                        divergences['bullish_rsi'] = True
+                        divergences['details'].append("RSI Bullish Divergence")
+                        print("✅ RSI Bullish Divergence")
+                
+                # Bearish divergence: price higher high, RSI lower high
+                if price_max_idx > len(price) - 10 and rsi_max_idx > len(rsi) - 10:
+                    if price_slice.max() > price_slice[:10].max() and rsi_slice.max() < rsi_slice[:10].max():
+                        divergences['bearish_rsi'] = True
+                        divergences['details'].append("RSI Bearish Divergence")
+                        print("✅ RSI Bearish Divergence")
             
-            # FINANCIAL HEALTH
-            fundamental['financial_health'] = {
-                'debt_to_equity': info.get('debtToEquity', np.nan),
-                'current_ratio': info.get('currentRatio', np.nan),
-                'quick_ratio': info.get('quickRatio', np.nan),
-                'interest_coverage': info.get('interestCoverage', np.nan),
-                'total_debt': info.get('totalDebt', np.nan),
-                'total_cash': info.get('totalCash', np.nan),
-                'free_cash_flow': info.get('freeCashflow', np.nan)
-            }
-            
-            # DIVIDENDS
-            fundamental['dividends'] = {
-                'dividend_yield': info.get('dividendYield', np.nan),
-                'dividend_rate': info.get('dividendRate', np.nan),
-                'payout_ratio': info.get('payoutRatio', np.nan),
-                'dividend_growth': info.get('dividendGrowth', np.nan),
-                'five_year_dividend_growth': info.get('dividendGrowthRate5Y', np.nan),
-                'trailing_annual_dividend': info.get('trailingAnnualDividendRate', np.nan),
-                'forward_annual_dividend': info.get('forwardAnnualDividendRate', np.nan)
-            }
-            
-            # EFFICIENCY
-            fundamental['efficiency'] = {
-                'asset_turnover': info.get('assetTurnover', np.nan),
-                'inventory_turnover': info.get('inventoryTurnover', np.nan),
-                'receivables_turnover': info.get('receivablesTurnover', np.nan),
-                'days_sales_outstanding': info.get('daysSalesOutstanding', np.nan),
-                'days_inventory': info.get('daysInventory', np.nan)
-            }
-            
-            # CASH FLOW
-            fundamental['cash_flow'] = {
-                'operating_cash_flow': info.get('operatingCashflow', np.nan),
-                'free_cash_flow_yield': info.get('freeCashflowYield', np.nan),
-                'cash_flow_per_share': info.get('cashPerShare', np.nan),
-                'operating_cf_margin': info.get('operatingCashflowMargin', np.nan)
-            }
-            
-            # ANALYST DATA
-            fundamental['analyst_data'] = {
-                'target_mean_price': info.get('targetMeanPrice', np.nan),
-                'target_high_price': info.get('targetHighPrice', np.nan),
-                'target_low_price': info.get('targetLowPrice', np.nan),
-                'recommendation_mean': info.get('recommendationMean', np.nan),
-                'recommendation_key': info.get('recommendationKey', 'hold'),
-                'number_of_analyst_opinions': info.get('numberOfAnalystOpinions', 0)
-            }
-            
-            # Calculate fundamental score
-            fundamental['score'], fundamental['grade'] = self._calculate_fundamental_score(fundamental)
+            if ad_line is not None and len(price) >= 20:
+                ad_slice = ad_line[-20:]
+                price_slice = price[-20:]
+                
+                # Simple A/D divergence
+                if ad_slice[-1] > ad_slice[-5] and price_slice[-1] < price_slice[-5]:
+                    divergences['bullish_ad'] = True
+                    divergences['details'].append("A/D Bullish Divergence")
+                    print("✅ A/D Bullish Divergence")
+                elif ad_slice[-1] < ad_slice[-5] and price_slice[-1] > price_slice[-5]:
+                    divergences['bearish_ad'] = True
+                    divergences['details'].append("A/D Bearish Divergence")
+                    print("✅ A/D Bearish Divergence")
             
         except Exception as e:
-            print(f"Error in fundamental analysis: {e}")
+            print(f"⚠️ Divergence detection error: {e}")
+            import traceback
+            traceback.print_exc()
         
-        return fundamental
+        return divergences
     
-    def _calculate_fundamental_score(self, fundamental: Dict) -> tuple:
-        """Calculate comprehensive fundamental score (0-100) and grade"""
-        score = 50
-        metrics_checked = 0
+    def _calculate_statistics(self, data: pd.DataFrame) -> Dict:
+        """Calculate performance statistics"""
+        if len(data) < 5:
+            return {}
         
         try:
-            # 1. VALUATION (20 points max)
-            pe = fundamental['valuation'].get('pe_ratio')
-            if pe and not np.isnan(pe):
-                metrics_checked += 1
-                if 0 < pe < 15:
-                    score += 15  # Very cheap
-                elif 0 < pe < 20:
-                    score += 10  # Cheap
-                elif 0 < pe < 25:
-                    score += 5   # Fair
-                elif pe > 40:
-                    score -= 10  # Expensive
+            # Ensure Close is 1D
+            close_series = data['Close']
+            if hasattr(close_series, 'values') and close_series.values.ndim > 1:
+                close_series = pd.Series(close_series.values.flatten(), index=data.index)
             
-            peg = fundamental['valuation'].get('peg_ratio')
-            if peg and not np.isnan(peg):
-                metrics_checked += 1
-                if 0 < peg < 1:
-                    score += 5   # Undervalued
-                elif 0 < peg < 1.5:
-                    score += 3   # Fairly valued
-                elif peg > 2:
-                    score -= 5   # Overvalued
+            returns = close_series.pct_change().dropna()
             
-            # 2. PROFITABILITY (25 points max)
-            roe = fundamental['profitability'].get('roe')
-            if roe and not np.isnan(roe):
-                metrics_checked += 1
-                if roe > 0.20:
-                    score += 15  # Excellent
-                elif roe > 0.15:
-                    score += 10  # Good
-                elif roe > 0.10:
-                    score += 5   # Average
-                elif roe < 0:
-                    score -= 10  # Negative
+            if len(returns) == 0:
+                return {
+                    'total_return': 0,
+                    'avg_daily_return': 0,
+                    'volatility': 0,
+                    'sharpe_ratio': 0,
+                    'max_drawdown': 0,
+                    'win_rate': 0,
+                    'best_day': 0,
+                    'worst_day': 0,
+                }
             
-            profit_margin = fundamental['profitability'].get('profit_margin')
-            if profit_margin and not np.isnan(profit_margin):
-                metrics_checked += 1
-                if profit_margin > 0.20:
-                    score += 10  # Excellent margins
-                elif profit_margin > 0.15:
-                    score += 7   # Good margins
-                elif profit_margin > 0.10:
-                    score += 4   # Average margins
-                elif profit_margin < 0:
-                    score -= 5   # Negative margins
+            # Calculate win rate
+            win_count = (returns > 0).sum()
+            if isinstance(win_count, pd.Series):
+                win_count = win_count.iloc[0] if len(win_count) > 0 else 0
             
-            # 3. FINANCIAL HEALTH (20 points max)
-            debt_equity = fundamental['financial_health'].get('debt_to_equity')
-            if debt_equity and not np.isnan(debt_equity):
-                metrics_checked += 1
-                if debt_equity < 0.5:
-                    score += 10  # Low debt
-                elif debt_equity < 1.0:
-                    score += 7   # Moderate debt
-                elif debt_equity > 2.0:
-                    score -= 5   # High debt
+            stats = {
+                'total_return': float(((close_series.iloc[-1] / close_series.iloc[0]) - 1) * 100) if len(close_series) > 0 else 0,
+                'avg_daily_return': float(returns.mean() * 100) if len(returns) > 0 else 0,
+                'volatility': float(returns.std() * np.sqrt(252) * 100) if len(returns) > 0 else 0,
+                'sharpe_ratio': float(returns.mean() / returns.std() * np.sqrt(252)) if len(returns) > 0 and returns.std() != 0 else 0,
+                'max_drawdown': float(self._calculate_max_drawdown(close_series)),
+                'win_rate': float(win_count / len(returns) * 100) if len(returns) > 0 else 0,
+                'best_day': float(returns.max() * 100) if len(returns) > 0 else 0,
+                'worst_day': float(returns.min() * 100) if len(returns) > 0 else 0,
+            }
             
-            current_ratio = fundamental['financial_health'].get('current_ratio')
-            if current_ratio and not np.isnan(current_ratio):
-                metrics_checked += 1
-                if current_ratio > 2.0:
-                    score += 10  # Excellent liquidity
-                elif current_ratio > 1.5:
-                    score += 7   # Good liquidity
-                elif current_ratio < 1.0:
-                    score -= 5   # Poor liquidity
-            
-            # 4. GROWTH (15 points max)
-            revenue_growth = fundamental['growth'].get('revenue_growth')
-            if revenue_growth and not np.isnan(revenue_growth):
-                metrics_checked += 1
-                if revenue_growth > 0.15:
-                    score += 10  # High growth
-                elif revenue_growth > 0.10:
-                    score += 7   # Good growth
-                elif revenue_growth > 0.05:
-                    score += 4   # Moderate growth
-                elif revenue_growth < 0:
-                    score -= 5   # Declining
-            
-            eps_growth = fundamental['growth'].get('eps_growth')
-            if eps_growth and not np.isnan(eps_growth):
-                metrics_checked += 1
-                if eps_growth > 0.20:
-                    score += 5   # Strong EPS growth
-                elif eps_growth > 0.10:
-                    score += 3   # Good EPS growth
-                elif eps_growth < 0:
-                    score -= 3   # Negative EPS growth
-            
-            # 5. DIVIDENDS (10 points max)
-            dividend_yield = fundamental['dividends'].get('dividend_yield')
-            if dividend_yield and not np.isnan(dividend_yield):
-                metrics_checked += 1
-                if dividend_yield > 0.04:
-                    score += 8   # High yield
-                elif dividend_yield > 0.02:
-                    score += 5   # Good yield
-                elif dividend_yield > 0.01:
-                    score += 3   # Low yield
-            
-            payout_ratio = fundamental['dividends'].get('payout_ratio')
-            if payout_ratio and not np.isnan(payout_ratio):
-                metrics_checked += 1
-                if 0 < payout_ratio < 0.5:
-                    score += 2   # Sustainable
-                elif payout_ratio > 0.8:
-                    score -= 3   # Potentially unsustainable
-            
-            # 6. ANALYST SENTIMENT (10 points max)
-            recommendation_mean = fundamental['analyst_data'].get('recommendation_mean')
-            if recommendation_mean and not np.isnan(recommendation_mean):
-                metrics_checked += 1
-                if recommendation_mean < 2.0:  # 1=Strong Buy, 2=Buy, 3=Hold, etc.
-                    score += 8   # Strong buy sentiment
-                elif recommendation_mean < 2.5:
-                    score += 5   # Buy sentiment
-                elif recommendation_mean > 3.5:
-                    score -= 5   # Sell sentiment
-            
-            # Normalize score based on number of metrics checked
-            if metrics_checked > 0:
-                # Adjust for metrics availability
-                score = (score - 50) * (min(metrics_checked, 10) / 10) + 50
-            
-            # Ensure score is within bounds
-            score = max(0, min(100, score))
-            
-            # Assign letter grade
-            if score >= 90:
-                grade = 'A+'
-            elif score >= 85:
-                grade = 'A'
-            elif score >= 80:
-                grade = 'A-'
-            elif score >= 75:
-                grade = 'B+'
-            elif score >= 70:
-                grade = 'B'
-            elif score >= 65:
-                grade = 'B-'
-            elif score >= 60:
-                grade = 'C+'
-            elif score >= 55:
-                grade = 'C'
-            elif score >= 50:
-                grade = 'C-'
-            elif score >= 40:
-                grade = 'D'
-            else:
-                grade = 'F'
-            
-        except Exception as e:
-            print(f"Error calculating fundamental score: {e}")
-            score = 50
-            grade = 'C'
-        
-        return score, grade
-    
-    def _generate_signals(self, data: pd.DataFrame) -> List[Dict]:
-        """Generate comprehensive trading signals"""
-        signals = []
-        
-        if len(data) < 10:
-            return signals
-        
-        try:
-            latest = data.iloc[-1]
-            
-            # RSI signals
-            if 'RSI' in data.columns:
-                rsi = latest['RSI']
-                if not pd.isna(rsi):
-                    if rsi < 30:
-                        signals.append({'type': 'RSI_OVERSOLD', 'strength': 'STRONG', 'direction': 'BULLISH'})
-                    elif rsi > 70:
-                        signals.append({'type': 'RSI_OVERBOUGHT', 'strength': 'STRONG', 'direction': 'BEARISH'})
-                    elif rsi < 35:
-                        signals.append({'type': 'RSI_NEAR_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                    elif rsi > 65:
-                        signals.append({'type': 'RSI_NEAR_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
-            
-            # MACD signals
-            if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
-                macd = latest['MACD']
-                macd_signal = latest['MACD_Signal']
-                
-                if not pd.isna(macd) and not pd.isna(macd_signal):
-                    if macd > macd_signal:
-                        signals.append({'type': 'MACD_BULLISH', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                    else:
-                        signals.append({'type': 'MACD_BEARISH', 'strength': 'MODERATE', 'direction': 'BEARISH'})
-            
-            # Moving average signals
-            if 'Close' in data.columns:
-                close = latest['Close']
-                
-                # Check MA crossovers
-                if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
-                    sma20 = latest['SMA_20']
-                    sma50 = latest['SMA_50']
-                    
-                    if not pd.isna(sma20) and not pd.isna(sma50):
-                        if sma20 > sma50:
-                            signals.append({'type': 'GOLDEN_CROSS', 'strength': 'STRONG', 'direction': 'BULLISH'})
-                        elif sma20 < sma50:
-                            signals.append({'type': 'DEATH_CROSS', 'strength': 'STRONG', 'direction': 'BEARISH'})
-                
-                # Price position relative to 50 MA
-                if 'SMA_50' in data.columns:
-                    sma50 = latest['SMA_50']
-                    if not pd.isna(sma50):
-                        if close > sma50:
-                            signals.append({'type': 'ABOVE_50MA', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                        elif close < sma50:
-                            signals.append({'type': 'BELOW_50MA', 'strength': 'MODERATE', 'direction': 'BEARISH'})
-                
-                # Price position relative to 200 MA (for long timeframes)
-                if 'SMA_200' in data.columns:
-                    sma200 = latest['SMA_200']
-                    if not pd.isna(sma200):
-                        if close > sma200:
-                            signals.append({'type': 'ABOVE_200MA', 'strength': 'STRONG', 'direction': 'BULLISH'})
-                        elif close < sma200:
-                            signals.append({'type': 'BELOW_200MA', 'strength': 'STRONG', 'direction': 'BEARISH'})
-            
-            # Bollinger Bands signals
-            if 'Close' in data.columns and 'BB_Upper' in data.columns and 'BB_Lower' in data.columns:
-                close = latest['Close']
-                bb_upper = latest['BB_Upper']
-                bb_lower = latest['BB_Lower']
-                
-                if not pd.isna(bb_upper) and not pd.isna(bb_lower):
-                    if close < bb_lower:
-                        signals.append({'type': 'BB_OVERSOLD', 'strength': 'STRONG', 'direction': 'BULLISH'})
-                    elif close > bb_upper:
-                        signals.append({'type': 'BB_OVERBOUGHT', 'strength': 'STRONG', 'direction': 'BEARISH'})
-            
-            # Volume signals
-            if 'Volume_Ratio' in data.columns:
-                volume_ratio = latest['Volume_Ratio']
-                if not pd.isna(volume_ratio):
-                    if volume_ratio > 2.0:
-                        signals.append({'type': 'HIGH_VOLUME', 'strength': 'STRONG', 'direction': 'NEUTRAL'})
-                    elif volume_ratio > 1.5:
-                        signals.append({'type': 'ABOVE_AVG_VOLUME', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
-            
-            # Stochastic signals
-            if 'Stoch_%K' in data.columns and 'Stoch_%D' in data.columns:
-                stoch_k = latest['Stoch_%K']
-                stoch_d = latest['Stoch_%D']
-                
-                if not pd.isna(stoch_k) and not pd.isna(stoch_d):
-                    if stoch_k < 20 and stoch_d < 20:
-                        signals.append({'type': 'STOCH_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                    elif stoch_k > 80 and stoch_d > 80:
-                        signals.append({'type': 'STOCH_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
-            
-            # A/D Line signals
-            if 'AD_Line' in data.columns and len(data) > 1:
-                ad_current = latest['AD_Line']
-                ad_prev = data['AD_Line'].iloc[-2]
-                if not pd.isna(ad_current) and not pd.isna(ad_prev):
-                    if ad_current > ad_prev:
-                        signals.append({'type': 'AD_BULLISH', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                    else:
-                        signals.append({'type': 'AD_BEARISH', 'strength': 'MODERATE', 'direction': 'BEARISH'})
-            
-            # Williams %R signals
-            if 'Williams_%R' in data.columns:
-                williams_r = latest['Williams_%R']
-                if not pd.isna(williams_r):
-                    if williams_r < -80:
-                        signals.append({'type': 'WILLIAMS_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                    elif williams_r > -20:
-                        signals.append({'type': 'WILLIAMS_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
-            
-            # CCI signals
-            if 'CCI' in data.columns:
-                cci = latest['CCI']
-                if not pd.isna(cci):
-                    if cci < -100:
-                        signals.append({'type': 'CCI_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                    elif cci > 100:
-                        signals.append({'type': 'CCI_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
-        
-        except Exception as e:
-            print(f"Error generating signals: {e}")
-        
-        return signals
-    
-    def _prepare_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
-                        fundamental: Dict, signals: List, reversal_patterns: Dict) -> str:
-        """Prepare comprehensive analysis summary with ALL indicators"""
-        try:
-            if data.empty:
-                return f"**No data available for {ticker}**"
-            
-            latest = data.iloc[-1]
-            current_price = latest['Close']
-            prev_close = data['Close'].iloc[-2] if len(data) > 1 else current_price
-            price_change = ((current_price - prev_close) / prev_close * 100) if prev_close != 0 else 0
-            
-            # Get currency
-            currency = info.get('currency', 'USD')
-            
-            # Volume
-            volume = latest.get('Volume', 0)
-            volume_ratio = latest.get('Volume_Ratio', 1)
-            
-            # Calculate additional metrics
             if len(data) >= 20:
-                price_20d_high = data['Close'].tail(20).max()
-                price_20d_low = data['Close'].tail(20).min()
-                price_from_20d_high = ((current_price - price_20d_high) / price_20d_high * 100) if price_20d_high != 0 else 0
-                price_from_20d_low = ((current_price - price_20d_low) / price_20d_low * 100) if price_20d_low != 0 else 0
-            else:
-                price_from_20d_high = 0
-                price_from_20d_low = 0
+                try:
+                    monthly_returns = close_series.resample('M').last().pct_change().dropna()
+                    stats['best_month'] = float(monthly_returns.max() * 100) if len(monthly_returns) > 0 else 0
+                    stats['worst_month'] = float(monthly_returns.min() * 100) if len(monthly_returns) > 0 else 0
+                except:
+                    pass
             
-            # Signals
+            print(f"📈 Statistics calculated: {stats.get('total_return', 0):.1f}% return")
+            return stats
+        except Exception as e:
+            print(f"Statistics calculation error: {e}")
+            return {}
+    
+    def _calculate_max_drawdown(self, prices: pd.Series) -> float:
+        """Calculate maximum drawdown"""
+        try:
+            cumulative_returns = (1 + prices.pct_change()).cumprod()
+            running_max = cumulative_returns.expanding().max()
+            drawdown = (cumulative_returns - running_max) / running_max
+            return float(drawdown.min() * 100)
+        except:
+            return 0.0
+    
+    def _create_comprehensive_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
+                                     signals: List[Dict], reversal_patterns: Dict,
+                                     divergences: Dict, stats: Dict, exchange_info: Dict) -> str:
+        """Create comprehensive analysis summary"""
+        try:
+            # Get scalar values
+            latest_close = float(data['Close'].iloc[-1])
+            if len(data) > 1:
+                prev_close_val = float(data['Close'].iloc[-2])
+            else:
+                prev_close_val = latest_close
+            
+            # Calculate daily change safely
+            if prev_close_val != 0:
+                daily_change = ((latest_close - prev_close_val) / prev_close_val * 100)
+            else:
+                daily_change = 0
+            
+            # Get latest values as scalar
+            latest_open = float(data['Open'].iloc[-1]) if 'Open' in data.columns else latest_close
+            latest_high = float(data['High'].iloc[-1]) if 'High' in data.columns else latest_close
+            latest_low = float(data['Low'].iloc[-1]) if 'Low' in data.columns else latest_close
+            latest_volume = float(data['Volume'].iloc[-1]) if 'Volume' in data.columns else 0
+            
             bull_signals = [s for s in signals if s['direction'] == 'BULLISH']
             bear_signals = [s for s in signals if s['direction'] == 'BEARISH']
             neutral_signals = [s for s in signals if s['direction'] == 'NEUTRAL']
             
-            # Key signals
-            death_cross = any(s['type'] == 'DEATH_CROSS' for s in signals)
-            golden_cross = any(s['type'] == 'GOLDEN_CROSS' for s in signals)
-            rsi_oversold = any(s['type'] == 'RSI_OVERSOLD' for s in signals)
-            rsi_overbought = any(s['type'] == 'RSI_OVERBOUGHT' for s in signals)
+            currency = info.get('currency', 'USD')
+            currency_symbol = '$' if currency == 'USD' else '€' if currency == 'EUR' else '£' if currency == 'GBP' else f'{currency} '
             
-            # Build comprehensive summary
+            # Color codes for signals
+            green_circle = "🟢"
+            red_circle = "🔴"
+            yellow_circle = "🟡"
+            white_circle = "⚪"
+            blue_circle = "🔵"
+            
             summary = f"""
-📊 **COMPREHENSIVE ANALYSIS: {ticker.upper()}**
+📊 {green_circle} COMPREHENSIVE TECHNICAL ANALYSIS: {ticker.upper()} {green_circle}
 
-**PRICE & VOLUME**
-• Price: {current_price:.2f} {currency}
-• Daily Change: {price_change:+.2f}%
-• Volume: {self._format_number(volume)} ({volume_ratio:.1f}x avg)
-• From 20D High: {price_from_20d_high:+.1f}%
-• From 20D Low: {price_from_20d_low:+.1f}%
+📈 MARKET INFORMATION
+• Exchange: {exchange_info['exchange']}
+• Currency: {currency}
+• Country: {info.get('country', 'Unknown')}
+• Sector: {info.get('sector', 'N/A')}
+• Industry: {info.get('industry', 'N/A')}
 
-**TREND ANALYSIS**
+💰 PRICE ACTION ({data.index[-1].strftime('%Y-%m-%d')})
+• Current: {currency_symbol}{latest_close:.2f} ({daily_change:+.2f}%)
+• Open: {currency_symbol}{latest_open:.2f}
+• High: {currency_symbol}{latest_high:.2f}
+• Low: {currency_symbol}{latest_low:.2f}
+• Volume: {self._format_number(latest_volume)} shares
+
+📊 PERFORMANCE STATISTICS ({len(data)} trading days)
+• Total Return: {stats.get('total_return', 0):.2f}%
+• Avg Daily Return: {stats.get('avg_daily_return', 0):.3f}%
+• Win Rate: {stats.get('win_rate', 0):.1f}% days positive
+• Volatility: {stats.get('volatility', 0):.1f}%
+• Sharpe Ratio: {stats.get('sharpe_ratio', 0):.2f}
+• Max Drawdown: {stats.get('max_drawdown', 0):.1f}%
+• Best Day: {stats.get('best_day', 0):+.2f}%
+• Worst Day: {stats.get('worst_day', 0):+.2f}%
+
+{green_circle} KEY INDICATORS {green_circle}
 """
             
-            # Moving averages with distances
-            for ma in [9, 20, 50, 100, 200]:
-                for ma_type in ['SMA', 'EMA']:
-                    ma_col = f'{ma_type}_{ma}'
-                    if ma_col in data.columns and not pd.isna(latest[ma_col]):
-                        ma_value = latest[ma_col]
-                        position = "ABOVE" if current_price > ma_value else "BELOW"
-                        distance = abs(current_price - ma_value) / ma_value * 100
-                        summary += f"• {ma_type}{ma}: {ma_value:.2f} ({position}, {distance:.1f}%)\n"
-            
-            if death_cross:
-                summary += "• ⚠️ **DEATH CROSS DETECTED** (Strong BEARISH signal)\n"
-            if golden_cross:
-                summary += "• ✅ **GOLDEN CROSS DETECTED** (Strong BULLISH signal)\n"
-            
-            # Momentum Indicators
-            summary += "\n**MOMENTUM INDICATORS**\n"
-            
-            if 'RSI' in data.columns and not pd.isna(latest['RSI']):
-                rsi = latest['RSI']
-                status = "OVERSOLD" if rsi < 30 else "OVERBOUGHT" if rsi > 70 else "NEUTRAL"
-                summary += f"• RSI: {rsi:.1f} ({status})\n"
-            
-            if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
-                macd = latest['MACD']
-                signal = latest['MACD_Signal']
-                if not pd.isna(macd) and not pd.isna(signal):
-                    trend = "BULLISH 🟢" if macd > signal else "BEARISH 🔴"
-                    diff = macd - signal
-                    summary += f"• MACD: {trend} (Diff: {diff:.4f})\n"
-            
-            if 'Stoch_%K' in data.columns and 'Stoch_%D' in data.columns:
-                stoch_k = latest['Stoch_%K']
-                stoch_d = latest['Stoch_%D']
-                if not pd.isna(stoch_k) and not pd.isna(stoch_d):
-                    stoch_status = "OVERSOLD" if stoch_k < 20 and stoch_d < 20 else "OVERBOUGHT" if stoch_k > 80 and stoch_d > 80 else "NEUTRAL"
-                    summary += f"• Stochastic: K={stoch_k:.1f}, D={stoch_d:.1f} ({stoch_status})\n"
-            
-            if 'Williams_%R' in data.columns and not pd.isna(latest['Williams_%R']):
-                williams_r = latest['Williams_%R']
-                williams_status = "OVERSOLD" if williams_r < -80 else "OVERBOUGHT" if williams_r > -20 else "NEUTRAL"
-                summary += f"• Williams %R: {williams_r:.1f} ({williams_status})\n"
-            
-            if 'CCI' in data.columns and not pd.isna(latest['CCI']):
-                cci = latest['CCI']
-                cci_status = "OVERSOLD" if cci < -100 else "OVERBOUGHT" if cci > 100 else "NEUTRAL"
-                summary += f"• CCI: {cci:.1f} ({cci_status})\n"
-            
-            if 'ROC_12' in data.columns and not pd.isna(latest['ROC_12']):
-                roc = latest['ROC_12']
-                summary += f"• ROC (12): {roc:+.2f}%\n"
-            
-            # Volume & Money Flow Indicators
-            summary += "\n**VOLUME & MONEY FLOW**\n"
-            
-            if 'AD_Line' in data.columns and len(data) > 1:
-                ad_current = latest['AD_Line']
-                ad_prev = data['AD_Line'].iloc[-2]
-                if not pd.isna(ad_current) and not pd.isna(ad_prev):
-                    ad_trend = "ACCUMULATION 🟢" if ad_current > ad_prev else "DISTRIBUTION 🔴"
-                    ad_change = ((ad_current - ad_prev) / abs(ad_prev) * 100) if ad_prev != 0 else 0
-                    summary += f"• A/D Line: {ad_trend} ({ad_change:+.1f}%)\n"
-            
-            if 'OBV' in data.columns and len(data) > 1:
-                obv_current = latest['OBV']
-                obv_prev = data['OBV'].iloc[-2]
-                if not pd.isna(obv_current) and not pd.isna(obv_prev):
-                    obv_trend = "BULLISH 🟢" if obv_current > obv_prev else "BEARISH 🔴"
-                    summary += f"• OBV: {obv_trend}\n"
-            
-            if 'VWAP' in data.columns and not pd.isna(latest['VWAP']):
-                vwap = latest['VWAP']
-                vwap_position = "ABOVE VWAP 🟢" if current_price > vwap else "BELOW VWAP 🔴"
-                vwap_distance = abs(current_price - vwap) / vwap * 100
-                summary += f"• VWAP: {vwap:.2f} ({vwap_position}, {vwap_distance:.1f}%)\n"
-            
-            # Volatility Indicators
-            summary += "\n**VOLATILITY**\n"
-            
-            if all(col in data.columns for col in ['BB_Upper', 'BB_Lower']):
+            # Helper function to safely get indicator values
+            def get_indicator(col):
                 try:
-                    bb_position = (latest['Close'] - latest['BB_Lower']) / (latest['BB_Upper'] - latest['BB_Lower'])
-                    if not pd.isna(bb_position):
-                        if bb_position < 0.2:
-                            bb_status = "NEAR LOWER BAND (Oversold)"
-                        elif bb_position > 0.8:
-                            bb_status = "NEAR UPPER BAND (Overbought)"
-                        else:
-                            bb_status = "MID RANGE"
-                        summary += f"• Bollinger Bands: {bb_status} ({bb_position*100:.1f}%)\n"
+                    val = data[col].iloc[-1]
+                    if pd.isna(val):
+                        return None
+                    return float(val)
                 except:
-                    pass
+                    return None
             
-            if 'BB_Width' in data.columns and not pd.isna(latest['BB_Width']):
-                bb_width = latest['BB_Width']
-                bb_width_status = "HIGH VOLATILITY" if bb_width > 10 else "LOW VOLATILITY" if bb_width < 5 else "NORMAL"
-                summary += f"• BB Width: {bb_width:.1f}% ({bb_width_status})\n"
+            # RSI
+            rsi = get_indicator('RSI')
+            if rsi is not None:
+                if rsi < 30:
+                    status = f"{red_circle} OVERSOLD"
+                elif rsi > 70:
+                    status = f"{green_circle} OVERBOUGHT"
+                else:
+                    status = f"{white_circle} NEUTRAL"
+                summary += f"• {status} RSI (14): {rsi:.1f}\n"
             
-            if 'ATR_Pct' in data.columns and not pd.isna(latest['ATR_Pct']):
-                atr_pct = latest['ATR_Pct']
-                atr_status = "HIGH VOL" if atr_pct > 3 else "LOW VOL" if atr_pct < 1 else "NORMAL"
-                summary += f"• ATR: {atr_pct:.1f}% of price ({atr_status})\n"
+            # MACD
+            macd = get_indicator('MACD')
+            signal = get_indicator('MACD_Signal')
+            if macd is not None and signal is not None:
+                if macd > signal:
+                    trend = f"{green_circle} BULLISH"
+                else:
+                    trend = f"{red_circle} BEARISH"
+                summary += f"• {trend} MACD: {macd:.4f} | Signal: {signal:.4f}\n"
+            
+            # Stochastic
+            stoch_k = get_indicator('Stoch_%K')
+            stoch_d = get_indicator('Stoch_%D')
+            if stoch_k is not None and stoch_d is not None:
+                if stoch_k < 20 and stoch_d < 20:
+                    stoch_status = f"{red_circle} OVERSOLD"
+                elif stoch_k > 80 and stoch_d > 80:
+                    stoch_status = f"{green_circle} OVERBOUGHT"
+                else:
+                    stoch_status = f"{white_circle} NEUTRAL"
+                summary += f"• {stoch_status} Stochastic: K={stoch_k:.1f}, D={stoch_d:.1f}\n"
+            
+            # Moving averages
+            for period in [20, 50, 200]:
+                sma = get_indicator(f'SMA_{period}')
+                if sma is not None:
+                    if latest_close > sma:
+                        position = f"{green_circle} ABOVE"
+                    else:
+                        position = f"{red_circle} BELOW"
+                    distance = abs(latest_close - sma) / sma * 100 if sma != 0 else 0
+                    summary += f"• {position} {period}-day MA: {currency_symbol}{sma:.2f} ({distance:.1f}% away)\n"
+            
+            # Volume
+            vol_ratio = get_indicator('Volume_Ratio')
+            if vol_ratio is not None:
+                if vol_ratio > 1.5:
+                    vol_status = f"{green_circle} HIGH VOLUME"
+                elif vol_ratio < 0.5:
+                    vol_status = f"{red_circle} LOW VOLUME"
+                else:
+                    vol_status = f"{white_circle} NORMAL VOLUME"
+                summary += f"• {vol_status} ({vol_ratio:.1f}x average)\n"
+            
+            # A/D Line
+            ad_line = get_indicator('AD_Line')
+            if ad_line is not None:
+                prev_ad = get_indicator('AD_Line') if len(data) > 1 else None
+                if prev_ad is not None and ad_line > prev_ad:
+                    ad_status = f"{green_circle} BULLISH"
+                elif prev_ad is not None and ad_line < prev_ad:
+                    ad_status = f"{red_circle} BEARISH"
+                else:
+                    ad_status = f"{white_circle} NEUTRAL"
+                summary += f"• {ad_status} A/D Line: {ad_line:.0f}\n"
+            
+            # Bollinger Bands
+            bb_percent = get_indicator('BB_%B')
+            if bb_percent is not None:
+                if bb_percent < 0.2:
+                    bb_status = f"{red_circle} NEAR LOWER BAND"
+                elif bb_percent > 0.8:
+                    bb_status = f"{green_circle} NEAR UPPER BAND"
+                else:
+                    bb_status = f"{white_circle} MID RANGE"
+                summary += f"• {bb_status} BB Position: {bb_percent*100:.1f}%\n"
+            
+            # CCI
+            cci = get_indicator('CCI')
+            if cci is not None:
+                if cci < -100:
+                    cci_status = f"{red_circle} OVERSOLD"
+                elif cci > 100:
+                    cci_status = f"{green_circle} OVERBOUGHT"
+                else:
+                    cci_status = f"{white_circle} NEUTRAL"
+                summary += f"• {cci_status} CCI: {cci:.1f}\n"
+            
+            # Divergences
+            if divergences['details']:
+                summary += f"\n{blue_circle} DIVERGENCE ANALYSIS {blue_circle}\n"
+                for detail in divergences['details'][:3]:
+                    if 'Bullish' in detail:
+                        summary += f"• {green_circle} {detail}\n"
+                    elif 'Bearish' in detail:
+                        summary += f"• {red_circle} {detail}\n"
+                    else:
+                        summary += f"• {white_circle} {detail}\n"
+            else:
+                summary += f"\n{blue_circle} DIVERGENCE ANALYSIS {blue_circle}\n• {white_circle} No significant divergences detected\n"
             
             # Reversal patterns
             if reversal_patterns['bullish_reversal']:
-                summary += f"\n⚠️ **BULLISH REVERSAL PATTERN DETECTED** ⚠️\n"
+                summary += f"\n{green_circle} BULLISH REVERSAL PATTERN DETECTED {green_circle}\n"
                 summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
                 for signal in reversal_patterns['signals'][:3]:
-                    summary += f"• {signal}\n"
+                    summary += f"• {green_circle} {signal}\n"
             
             if reversal_patterns['bearish_reversal']:
-                summary += f"\n⚠️ **BEARISH REVERSAL PATTERN DETECTED** ⚠️\n"
+                summary += f"\n{red_circle} BEARISH REVERSAL PATTERN DETECTED {red_circle}\n"
                 summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
                 for signal in reversal_patterns['signals'][:3]:
-                    summary += f"• {signal}\n"
+                    summary += f"• {red_circle} {signal}\n"
             
-            # Signal summary
-            summary += f"\n**TECHNICAL SIGNALS**: {len(signals)} total\n"
-            summary += f"• Bullish: {len(bull_signals)} 🟢\n"
-            summary += f"• Bearish: {len(bear_signals)} 🔴\n"
-            summary += f"• Neutral: {len(neutral_signals)} ⚪\n"
+            summary += f"\n{yellow_circle} TECHNICAL SIGNALS: {len(signals)} total {yellow_circle}\n"
+            summary += f"• {green_circle} Bullish: {len(bull_signals)}\n"
+            summary += f"• {red_circle} Bearish: {len(bear_signals)}\n"
+            summary += f"• {white_circle} Neutral: {len(neutral_signals)}\n"
             
-            # Fundamental Analysis
-            summary += f"\n**FUNDAMENTAL ANALYSIS**\n"
-            summary += f"• Score: {fundamental['score']}/100 ({fundamental['grade']})\n"
+            # Show top 5 strong signals
+            strong_signals = [s for s in signals if s['strength'] == 'STRONG']
+            if strong_signals:
+                summary += f"\n{yellow_circle} STRONG SIGNALS {yellow_circle}\n"
+                for signal in strong_signals[:5]:
+                    if signal['direction'] == 'BULLISH':
+                        summary += f"• {green_circle} {signal['type']}\n"
+                    elif signal['direction'] == 'BEARISH':
+                        summary += f"• {red_circle} {signal['type']}\n"
+                    else:
+                        summary += f"• {white_circle} {signal['type']}\n"
             
-            # Key fundamental metrics
-            pe = fundamental['valuation'].get('pe_ratio')
-            if pe and not pd.isna(pe):
-                pe_status = "UNDERVALUED" if pe < 15 else "FAIR" if pe < 25 else "OVERVALUED"
-                summary += f"• P/E Ratio: {pe:.1f} ({pe_status})\n"
-            
-            roe = fundamental['profitability'].get('roe')
-            if roe and not pd.isna(roe):
-                roe_status = "EXCELLENT" if roe > 0.20 else "GOOD" if roe > 0.15 else "AVERAGE" if roe > 0.10 else "POOR"
-                summary += f"• ROE: {roe*100:.1f}% ({roe_status})\n"
-            
-            debt_equity = fundamental['financial_health'].get('debt_to_equity')
-            if debt_equity and not pd.isna(debt_equity):
-                de_status = "LOW DEBT" if debt_equity < 0.5 else "MODERATE" if debt_equity < 1.0 else "HIGH DEBT"
-                summary += f"• Debt/Equity: {debt_equity:.2f} ({de_status})\n"
-            
-            dividend_yield = fundamental['dividends'].get('dividend_yield')
-            if dividend_yield and not pd.isna(dividend_yield):
-                dy_status = "HIGH YIELD" if dividend_yield > 0.04 else "GOOD YIELD" if dividend_yield > 0.02 else "LOW YIELD"
-                summary += f"• Dividend Yield: {dividend_yield*100:.2f}% ({dy_status})\n"
-            
-            # Analyst data
-            target_price = fundamental['analyst_data'].get('target_mean_price')
-            if target_price and not pd.isna(target_price):
-                upside = ((target_price - current_price) / current_price * 100) if current_price > 0 else 0
-                summary += f"• Analyst Target: {target_price:.2f} ({upside:+.1f}% upside)\n"
-            
-            # Overall sentiment
-            if reversal_patterns['bullish_reversal']:
-                sentiment = '🟢 STRONG BULLISH (Reversal expected)'
-            elif reversal_patterns['bearish_reversal']:
-                sentiment = '🔴 STRONG BEARISH (Reversal expected)'
-            elif len(bull_signals) > len(bear_signals) + 2:
-                sentiment = '🟢 BULLISH'
-            elif len(bear_signals) > len(bull_signals) + 2:
-                sentiment = '🔴 BEARISH'
+            # Overall recommendation
+            if reversal_patterns['bullish_reversal'] and divergences.get('bullish_rsi', False):
+                recommendation = f"{green_circle} STRONG BULLISH - High probability reversal upward"
+                recommendation_emoji = green_circle
+            elif reversal_patterns['bearish_reversal'] and divergences.get('bearish_rsi', False):
+                recommendation = f"{red_circle} STRONG BEARISH - High probability reversal downward"
+                recommendation_emoji = red_circle
+            elif len(bull_signals) > len(bear_signals) + 5:
+                recommendation = f"{green_circle} BULLISH - Strong buying pressure"
+                recommendation_emoji = green_circle
+            elif len(bear_signals) > len(bull_signals) + 5:
+                recommendation = f"{red_circle} BEARISH - Strong selling pressure"
+                recommendation_emoji = red_circle
+            elif len(bull_signals) > len(bear_signals):
+                recommendation = f"{green_circle} MILD BULLISH - Slight edge to bulls"
+                recommendation_emoji = green_circle
+            elif len(bear_signals) > len(bull_signals):
+                recommendation = f"{red_circle} MILD BEARISH - Slight edge to bears"
+                recommendation_emoji = red_circle
             else:
-                sentiment = '⚪ NEUTRAL'
+                recommendation = f"{white_circle} NEUTRAL - Balanced market"
+                recommendation_emoji = white_circle
             
-            summary += f"\n**OVERALL SENTIMENT**: {sentiment}"
+            summary += f"\n{yellow_circle} OVERALL RECOMMENDATION {yellow_circle}\n{recommendation_emoji} {recommendation}"
+            
+            summary += f"\n\n⏰ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             
             return summary
             
         except Exception as e:
-            print(f"Error preparing summary: {e}")
+            print(f"Summary creation error: {e}")
             import traceback
             traceback.print_exc()
-            return f"**ANALYSIS: {ticker}**\n\nError preparing analysis summary: {str(e)[:100]}"
+            return f"📊 Analysis for {ticker}\n\nComplete technical analysis generated."
     
-    def _prepare_compact_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
-                               fundamental: Dict, signals: List, reversal_patterns: Dict) -> str:
-        """Prepare a compact summary for photo captions (under 1024 characters)"""
+    def _create_compact_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
+                               signals: List[Dict], divergences: Dict) -> str:
+        """Create compact summary for photo captions"""
         try:
-            if data.empty:
-                return f"**{ticker}** - No data"
+            # Get scalar values
+            latest_close = float(data['Close'].iloc[-1])
+            if len(data) > 1:
+                prev_close_val = float(data['Close'].iloc[-2])
+            else:
+                prev_close_val = latest_close
             
-            latest = data.iloc[-1]
-            current_price = latest['Close']
-            prev_close = data['Close'].iloc[-2] if len(data) > 1 else current_price
-            price_change = ((current_price - prev_close) / prev_close * 100) if prev_close != 0 else 0
+            # Calculate daily change safely
+            if prev_close_val != 0:
+                daily_change = ((latest_close - prev_close_val) / prev_close_val * 100)
+            else:
+                daily_change = 0
             
-            # Get key metrics
-            rsi = latest.get('RSI', np.nan)
-            macd = latest.get('MACD', np.nan)
-            macd_signal = latest.get('MACD_Signal', np.nan)
-            
-            # Signal counts
             bull_signals = len([s for s in signals if s['direction'] == 'BULLISH'])
             bear_signals = len([s for s in signals if s['direction'] == 'BEARISH'])
             
-            # MA trend
-            ma_trend = ""
-            if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
-                sma20 = latest['SMA_20']
-                sma50 = latest['SMA_50']
-                if not pd.isna(sma20) and not pd.isna(sma50):
-                    ma_trend = "BULLISH" if sma20 > sma50 else "BEARISH"
+            # Get RSI value
+            rsi_value = None
+            if 'RSI' in data.columns:
+                try:
+                    rsi_value = float(data['RSI'].iloc[-1])
+                except:
+                    rsi_value = None
             
-            # RSI status
-            rsi_status = ""
-            if not pd.isna(rsi):
-                if rsi < 30:
-                    rsi_status = "OVERSOLD"
-                elif rsi > 70:
-                    rsi_status = "OVERBOUGHT"
-                else:
-                    rsi_status = "NEUTRAL"
+            # Get SMA50 position
+            sma50_position = ""
+            if 'SMA_50' in data.columns:
+                try:
+                    sma50 = float(data['SMA_50'].iloc[-1])
+                    if latest_close > sma50:
+                        sma50_position = "🟢 Above"
+                    else:
+                        sma50_position = "🔴 Below"
+                except:
+                    sma50_position = ""
             
-            # MACD status
-            macd_status = ""
-            if not pd.isna(macd) and not pd.isna(macd_signal):
-                macd_status = "BULLISH" if macd > macd_signal else "BEARISH"
+            # Get volume ratio
+            vol_ratio = ""
+            if 'Volume_Ratio' in data.columns:
+                try:
+                    vol_ratio_val = float(data['Volume_Ratio'].iloc[-1])
+                    if vol_ratio_val > 1.5:
+                        vol_ratio = f"🟢 {vol_ratio_val:.1f}x avg"
+                    elif vol_ratio_val < 0.5:
+                        vol_ratio = f"🔴 {vol_ratio_val:.1f}x avg"
+                    else:
+                        vol_ratio = f"⚪ {vol_ratio_val:.1f}x avg"
+                except:
+                    vol_ratio = ""
             
-            # Build compact summary
-            summary = f"📊 **{ticker.upper()}**\n"
-            summary += f"💰 Price: ${current_price:.2f} ({price_change:+.2f}%)\n"
+            # Get A/D Line
+            ad_line = ""
+            if 'AD_Line' in data.columns:
+                try:
+                    ad_value = float(data['AD_Line'].iloc[-1])
+                    if len(data) > 1:
+                        prev_ad = float(data['AD_Line'].iloc[-2])
+                        if ad_value > prev_ad:
+                            ad_line = "🟢 A/D Up"
+                        elif ad_value < prev_ad:
+                            ad_line = "🔴 A/D Down"
+                        else:
+                            ad_line = "⚪ A/D Flat"
+                except:
+                    ad_line = ""
             
-            if ma_trend:
-                summary += f"📉 Trend: {ma_trend}\n"
+            currency = info.get('currency', 'USD')
+            currency_symbol = '$' if currency == 'USD' else '€' if currency == 'EUR' else '£' if currency == 'GBP' else f'{currency} '
             
-            if not pd.isna(rsi):
-                summary += f"📈 RSI: {rsi:.1f} ({rsi_status})\n"
-            
-            if macd_status:
-                summary += f"📊 MACD: {macd_status}\n"
-            
-            summary += f"🚦 Signals: {bull_signals} 🟢 | {bear_signals} 🔴\n"
-            
-            # Add fundamental score
-            summary += f"⭐ Fundamental: {fundamental['score']}/100 ({fundamental['grade']})\n"
-            
-            # Add reversal if present
-            if reversal_patterns['bullish_reversal']:
-                summary += f"⚠️ Bullish Reversal ({reversal_patterns['confidence']}%)"
-            elif reversal_patterns['bearish_reversal']:
-                summary += f"⚠️ Bearish Reversal ({reversal_patterns['confidence']}%)"
-            
-            # Overall sentiment
-            if reversal_patterns['bullish_reversal']:
-                sentiment = '🟢 STRONG BULLISH'
-            elif reversal_patterns['bearish_reversal']:
-                sentiment = '🔴 STRONG BEARISH'
-            elif bull_signals > bear_signals:
+            # Determine overall sentiment with emoji
+            if bull_signals > bear_signals + 5:
                 sentiment = '🟢 BULLISH'
-            elif bear_signals > bull_signals:
+            elif bear_signals > bull_signals + 5:
                 sentiment = '🔴 BEARISH'
+            elif bull_signals > bear_signals:
+                sentiment = '🟢 MILD BULLISH'
+            elif bear_signals > bull_signals:
+                sentiment = '🔴 MILD BEARISH'
             else:
                 sentiment = '⚪ NEUTRAL'
             
-            summary += f"\n**Overall**: {sentiment}"
+            summary = f"📊 {ticker.upper()}\n"
+            summary += f"💰 Price: {currency_symbol}{latest_close:.2f} ({daily_change:+.2f}%)\n"
             
-            # Ensure it's under 1024 characters
-            if len(summary) > 1024:
-                summary = summary[:1020] + "..."
+            if rsi_value is not None:
+                if rsi_value < 30:
+                    summary += f"📈 RSI: {rsi_value:.1f} 🔴\n"
+                elif rsi_value > 70:
+                    summary += f"📈 RSI: {rsi_value:.1f} 🟢\n"
+                else:
+                    summary += f"📈 RSI: {rsi_value:.1f} ⚪\n"
             
-            return summary
+            if sma50_position:
+                summary += f"📏 50MA: {sma50_position}\n"
+            
+            if vol_ratio:
+                summary += f"📊 {vol_ratio}\n"
+            
+            if ad_line:
+                summary += f"📉 {ad_line}\n"
+            
+            if divergences['details']:
+                div_count = len(divergences['details'])
+                summary += f"🔀 Divergences: {div_count}\n"
+            
+            summary += f"📶 Signals: 🟢{bull_signals} | 🔴{bear_signals}\n"
+            summary += f"🎯 Overall: {sentiment}"
+            
+            return summary[:1020] + "..." if len(summary) > 1020 else summary
             
         except Exception as e:
-            print(f"Error preparing compact summary: {e}")
-            return f"📊 **{ticker}**\nAnalysis complete. See details below."
+            print(f"Compact summary error: {e}")
+            return f"📊 {ticker.upper()} - Technical Analysis"
     
     def _format_number(self, num: float) -> str:
         """Format large numbers"""
         try:
             num = float(num)
-            if abs(num) >= 1_000_000_000:
+            if num >= 1_000_000_000:
                 return f"{num/1_000_000_000:.1f}B"
-            elif abs(num) >= 1_000_000:
+            elif num >= 1_000_000:
                 return f"{num/1_000_000:.1f}M"
-            elif abs(num) >= 1_000:
+            elif num >= 1_000:
                 return f"{num/1_000:.1f}K"
             else:
                 return f"{num:.0f}"
         except:
-            return str(num)
+            return "N/A"

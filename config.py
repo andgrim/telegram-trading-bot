@@ -1,121 +1,148 @@
+"""
+Universal Trading Bot Configuration
+Supports all Yahoo Finance markets worldwide
+"""
 import os
 from typing import Dict
-from dataclasses import dataclass, field
-from dotenv import load_dotenv
 
-# Load environment variables from .env file if it exists (for local development)
-if os.path.exists('.env'):
-    load_dotenv()
+# Environment detection
+IS_RENDER = os.getenv('RENDER') == 'true'
+IS_LOCAL = not IS_RENDER
 
-@dataclass
 class TradingConfig:
-    """Configuration for the trading analysis system."""
-
-    # Telegram Bot Token - Retrieved from environment variable
-    TELEGRAM_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "")
-
-    # Environment detection
-    IS_RENDER: bool = os.getenv('RENDER') == 'true'
-    IS_LOCAL: bool = not IS_RENDER
-
-    # Rate limiting settings for Yahoo Finance
-    YAHOO_RATE_LIMIT: bool = True
-    YAHOO_MAX_RETRIES: int = 2
-    YAHOO_DELAY_SECONDS: float = 2.0 if IS_RENDER else 1.0
-    YAHOO_TIMEOUT: int = 15
-
-    # Chart settings
-    CHART_COLORS: Dict = field(default_factory=lambda: None)
-    CHART_STYLE: Dict = field(default_factory=lambda: None)
-
+    """Universal configuration for all markets"""
+    
+    # Telegram Bot Token
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+    
+    # Yahoo Finance settings - Optimized for reliability
+    YAHOO_RATE_LIMIT = True
+    YAHOO_MAX_RETRIES = 3
+    YAHOO_DELAY_SECONDS = 1.5  # Balanced delay
+    YAHOO_TIMEOUT = 30
+    
+    # Environment flags
+    IS_RENDER = IS_RENDER
+    IS_LOCAL = IS_LOCAL
+    
+    # Chart colors - Enhanced for better visibility
+    CHART_COLORS = {
+        'background': '#0a0a0a',
+        'text': '#ffffff',
+        'price_line': '#00FFFF',  # Bright Cyan
+        'ma_20': '#FF4081',      # Bright Pink
+        'ma_50': '#7C4DFF',      # Purple
+        'ma_200': '#FF9800',     # Orange
+        'volume_up': '#00E676',  # Bright Green
+        'volume_down': '#FF5252', # Bright Red
+        'rsi_line': '#FFEB3B',   # Yellow
+        'macd_line': '#00E676',  # Green
+        'macd_signal': '#FF5252', # Red
+        'grid': '#1a1a1a',
+    }
+    
+    CHART_STYLE = {
+        'price_line_width': 1.5,
+        'ma_line_width': 1.2,
+        'indicator_line_width': 1.0,
+        'title_font_size': 14,
+        'label_font_size': 10,
+        'dpi': 100,
+    }
+    
     # Technical analysis settings
-    RSI_PERIOD: int = 14
-    MACD_FAST: int = 12
-    MACD_SLOW: int = 26
-    MACD_SIGNAL: int = 9
-    BB_PERIOD: int = 20
-    BB_STD: int = 2
+    RSI_PERIOD = 14
+    MACD_FAST = 12
+    MACD_SLOW = 26
+    MACD_SIGNAL = 9
+    STOCH_PERIOD = 14
+    BB_PERIOD = 20
+    BB_STD = 2
+    
+    # Cache settings
+    CACHE_TTL = 600  # 10 minutes
+    MAX_CACHE_SIZE = 100
+    
+    # Exchange suffixes for automatic detection (expanded)
+    EXCHANGE_SUFFIXES = {
+        # Europe
+        '.MI': 'Milan',
+        '.PA': 'Paris',
+        '.DE': 'Germany',
+        '.AS': 'Amsterdam',
+        '.L': 'London',
+        '.SW': 'Switzerland',
+        '.BR': 'Brussels',
+        '.IR': 'Ireland',
+        '.MC': 'Madrid',
+        '.CO': 'Copenhagen',
+        '.OL': 'Oslo',
+        '.ST': 'Stockholm',
+        '.HE': 'Helsinki',
+        '.VI': 'Vienna',
+        '.AT': 'Athens',
+        '.LS': 'Lisbon',
+        
+        # Asia
+        '.T': 'Tokyo',
+        '.HK': 'Hong Kong',
+        '.SS': 'Shanghai',
+        '.SZ': 'Shenzhen',
+        '.KS': 'Korea',
+        '.TW': 'Taiwan',
+        '.SI': 'Singapore',
+        '.JK': 'Jakarta',
+        '.BK': 'Bangkok',
+        '.NS': 'India',
+        
+        # Americas
+        '.AX': 'Australia',
+        '.V': 'Vancouver',
+        '.TO': 'Toronto',
+        '.CN': 'Canada',
+        '.MX': 'Mexico',
+        '.SA': 'São Paulo',
+        '.BA': 'Buenos Aires',
+    }
+    
+    @classmethod
+    def get_exchange_info(cls, ticker: str) -> Dict:
+        """Get exchange information for ticker"""
+        ticker_upper = ticker.upper()
+        
+        # Check for special formats first
+        if ticker_upper.startswith('^'):
+            return {'suffix': None, 'exchange': 'Index', 'base_ticker': ticker_upper}
+        elif '=F' in ticker_upper:
+            return {'suffix': None, 'exchange': 'Futures', 'base_ticker': ticker_upper}
+        elif '-USD' in ticker_upper or '-EUR' in ticker_upper:
+            return {'suffix': None, 'exchange': 'Cryptocurrency', 'base_ticker': ticker_upper}
+        elif '=X' in ticker_upper:
+            return {'suffix': None, 'exchange': 'Forex', 'base_ticker': ticker_upper}
+        elif '.SS' in ticker_upper or '.SZ' in ticker_upper:
+            return {'suffix': None, 'exchange': 'China', 'base_ticker': ticker_upper}
+        elif '.KS' in ticker_upper:
+            return {'suffix': None, 'exchange': 'Korea', 'base_ticker': ticker_upper}
+        elif '.NS' in ticker_upper:
+            return {'suffix': None, 'exchange': 'India', 'base_ticker': ticker_upper}
+        
+        # Check exchange suffixes
+        for suffix, exchange in cls.EXCHANGE_SUFFIXES.items():
+            if ticker_upper.endswith(suffix):
+                return {
+                    'suffix': suffix,
+                    'exchange': exchange,
+                    'base_ticker': ticker_upper.replace(suffix, '')
+                }
+        
+        # Default to US/Unknown
+        return {'suffix': None, 'exchange': 'US/Unknown', 'base_ticker': ticker_upper}
 
-    # Reversal detection settings
-    REVERSAL_SETTINGS: Dict = field(default_factory=lambda: None)
-
-    # Caching settings - MUST be defined with field() 
-    CACHE_TTL: int = field(default=300)  # 5 minutes
-
-    def __post_init__(self):
-        """Initialize attributes after the object is created."""
-        if self.CHART_COLORS is None:
-            self.CHART_COLORS = self._get_complete_color_scheme()
-        if self.CHART_STYLE is None:
-            self.CHART_STYLE = self._get_chart_style()
-        if self.REVERSAL_SETTINGS is None:
-            self.REVERSAL_SETTINGS = {
-                'rsi_oversold': 30,
-                'rsi_overbought': 70,
-                'volume_spike_threshold': 1.5,
-            }
-
-    def _get_complete_color_scheme(self) -> Dict:
-        """Returns a complete color scheme dictionary for all chart elements."""
-        return {
-            # Background and Base
-            'background': '#0a0a0a',
-            'grid': '#1a1a1a',
-            'text': '#ffffff',
-
-            # Price and Lines
-            'price_line': '#40E0D0',  # Turquoise
-
-            # Moving Averages
-            'ma_9': '#00FF9D',    # Bright Green
-            'ma_20': '#FF6B9D',   # Pink
-            'ma_50': '#9D4EDD',   # Purple
-            'ma_100': '#FFD700',  # Gold
-            'ma_200': '#FF8C00',  # Dark Orange
-
-            # Bollinger Bands
-            'bb_upper': '#FF00AA',
-            'bb_lower': '#00FFAA',
-            'bb_middle': '#AAAAAA',
-
-            # Volume
-            'volume_up': '#00FF9D',
-            'volume_down': '#FF0080',
-
-            # Technical Indicators
-            'rsi_line': '#FFFF00',      # Yellow
-            'macd_line': '#00FF9D',     # Green
-            'macd_signal': '#FF0080',   # Red
-            'macd_hist_positive': '#00FF9D',
-            'macd_hist_negative': '#FF0080',
-            'ad_line': '#00E0FF',       # Light Blue
-
-            # Signals and Highlights
-            'reversal_signal': '#FFAA00',
-            'oversold_area': '#00FF9D22',
-            'overbought_area': '#FF008022',
-        }
-
-    def _get_chart_style(self) -> Dict:
-        """Returns styling parameters for charts."""
-        return {
-            'price_line_width': 1.2,
-            'ma_line_width': 0.9,
-            'indicator_line_width': 0.8,
-            'grid_alpha': 0.15,
-            'title_font_size': 14,
-            'label_font_size': 10,
-            'dpi': 100 if self.IS_RENDER else 120,
-            'figure_size': (14, 10),
-        }
-
-# Create a single global configuration instance
 CONFIG = TradingConfig()
 
-# Optional: Quick validation log (visible in local terminal)
 if __name__ == "__main__":
-    print(f"Configuration loaded. IS_RENDER: {CONFIG.IS_RENDER}")
-    print(f"CHART_COLORS contains 'ma_9': {'ma_9' in CONFIG.CHART_COLORS}")
-    print(f"Cache TTL: {CONFIG.CACHE_TTL} seconds")
-    print(f"Yahoo delay: {CONFIG.YAHOO_DELAY_SECONDS} seconds")
-    print(f"Total config attributes: {len(vars(CONFIG))}")
+    print(f"✅ Universal Config loaded")
+    print(f"📊 Supports ALL Yahoo Finance tickers")
+    print(f"⏱️ Yahoo delay: {CONFIG.YAHOO_DELAY_SECONDS}s")
+    print(f"🌍 {len(CONFIG.EXCHANGE_SUFFIXES)} exchange suffixes supported")
+    print(f"📈 Available periods: 3m, 6m, 1y, 2y, 3y, 5y, max")

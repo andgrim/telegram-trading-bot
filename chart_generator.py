@@ -1,392 +1,385 @@
+"""
+Chart Generator for Trading Analysis
+"""
 import matplotlib
-# IMPORTANT: Use 'Agg' backend for Render (headless environment)
-matplotlib.use('Agg')  # <-- ADD THIS LINE BEFORE IMPORTING pyplot
+matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
 import numpy as np
-from typing import Dict, List
 import tempfile
 import os
 
 from config import CONFIG
 
 class ChartGenerator:
-    """Generate clean trading charts with extended timeframe support"""
+    """Generate comprehensive charts with multiple indicators"""
     
     def __init__(self):
         self.config = CONFIG
         
-        # Access attributes AFTER __post_init__ has been executed
-        self.colors = self.config.CHART_COLORS
-        self.style = self.config.CHART_STYLE
-        
-        # Set dark theme with thin lines
+        # Configure dark theme
         plt.style.use('dark_background')
         
-        # Configure thin lines globally
         plt.rcParams.update({
-            'figure.facecolor': self.colors['background'],
-            'axes.facecolor': self.colors['background'],
-            'axes.edgecolor': self.colors['text'],
-            'axes.labelcolor': self.colors['text'],
-            'text.color': self.colors['text'],
-            'xtick.color': self.colors['text'],
-            'ytick.color': self.colors['text'],
-            'grid.color': self.colors['grid'],
+            'figure.facecolor': self.config.CHART_COLORS['background'],
+            'axes.facecolor': self.config.CHART_COLORS['background'],
+            'axes.edgecolor': self.config.CHART_COLORS['text'],
+            'axes.labelcolor': self.config.CHART_COLORS['text'],
+            'text.color': self.config.CHART_COLORS['text'],
+            'xtick.color': self.config.CHART_COLORS['text'],
+            'ytick.color': self.config.CHART_COLORS['text'],
+            'grid.color': self.config.CHART_COLORS['grid'],
             'grid.alpha': 0.1,
             'lines.linewidth': 1.0,
-            'axes.linewidth': 0.5,
-            'xtick.major.width': 0.5,
-            'ytick.major.width': 0.5,
         })
     
-    def _apply_style_to_axes(self, ax):
-        """Apply consistent thin style to axes"""
-        ax.tick_params(colors=self.colors['text'], width=0.5, length=3)
-        ax.title.set_color(self.colors['text'])
-        ax.xaxis.label.set_color(self.colors['text'])
-        ax.yaxis.label.set_color(self.colors['text'])
-        ax.grid(True, alpha=0.1, linewidth=0.3)
-    
-    def generate_price_chart(self, data: pd.DataFrame, ticker: str, 
-                           period: str = '1y') -> str:
-        """Generate clean price chart for all timeframes including extended periods"""
-        # Ensure we have enough data points
+    def generate_price_chart(self, data: pd.DataFrame, ticker: str, period: str) -> str:
+        """Generate comprehensive price chart with indicators"""
         if len(data) < 10:
-            raise ValueError(f"Not enough data points: {len(data)}")
+            raise ValueError(f"Not enough data for chart: {len(data)} rows")
         
-        print(f"DEBUG: Generating chart for {ticker}, period {period}")
-        print(f"DEBUG: Data shape: {data.shape}")
-        print(f"DEBUG: Data columns: {data.columns.tolist()}")
-        print(f"DEBUG: Data index type: {type(data.index)}")
-        print(f"DEBUG: First date: {data.index[0]}, Last date: {data.index[-1]}")
-        
-        # Verify required columns exist
-        required_cols = ['Close', 'High', 'Low', 'Open', 'Volume']
-        missing_cols = [col for col in required_cols if col not in data.columns]
-        if missing_cols:
-            print(f"WARNING: Missing columns: {missing_cols}")
-            # Try to continue with what we have
-        
-        # Use appropriate number of periods based on timeframe
-        # Trading days approximation: 252 days per year
-        period_display_map = {
-            '3m': 63,    # 3 months
-            '6m': 126,   # 6 months
-            '1y': 252,   # 1 year
-            '2y': 504,   # 2 years
-            '3y': 756,   # 3 years
-            '5y': 1260   # 5 years
-        }
-        
-        days_to_display = period_display_map.get(period, 252)
-        
-        # Ensure we don't exceed available data
-        if len(data) > days_to_display:
-            display_data = data.iloc[-days_to_display:].copy()
-        else:
+        try:
+            # Clean the data - ensure all columns are 1D
             display_data = data.copy()
-        
-        fig = plt.figure(figsize=(14, 10), 
-                        facecolor=self.colors['background'],
-                        dpi=self.style['dpi'])
-        
-        # Create grid for main chart and indicators
-        gs = fig.add_gridspec(4, 1, hspace=0.15, height_ratios=[3, 1, 1, 1])
-        
-        # 1. PRICE PANEL
-        ax_price = fig.add_subplot(gs[0])
-        
-        # Plot price line (thin)
-        ax_price.plot(display_data.index, display_data['Close'], 
-                     color=self.colors['price_line'],
-                     linewidth=self.style['price_line_width'],
-                     alpha=0.9,
-                     label=f'{ticker} Price',
-                     zorder=5)
-        
-        # Plot moving averages - different sets for different timeframes
-        if period in ['2y', '3y', '5y']:
-            # For long timeframes, show 50, 100, 200 MAs
+            
+            # Debug: Print data info
+            print(f"📊 Chart data shape: {display_data.shape}")
+            print(f"📊 Chart columns: {list(display_data.columns)[:15]}")
+            
+            # Ensure index is datetime
+            if not isinstance(display_data.index, pd.DatetimeIndex):
+                display_data.index = pd.to_datetime(display_data.index)
+            
+            # Flatten any 2D columns
+            for col in display_data.columns:
+                if col in display_data.columns:
+                    values = display_data[col].values
+                    if hasattr(values, 'ndim') and values.ndim > 1:
+                        display_data[col] = pd.Series(values.flatten(), index=display_data.index)
+            
+            # Determine days to show based on period
+            days_to_show = self._get_days_for_period(period, len(display_data))
+            
+            # Ensure we have enough data
+            if len(display_data) > days_to_show:
+                display_data = display_data.tail(days_to_show)
+            
+            # Create figure with appropriate size
+            fig = plt.figure(figsize=(16, 14), 
+                            facecolor=self.config.CHART_COLORS['background'],
+                            dpi=100)
+            
+            # Create subplots grid - 6 subplots
+            gs = fig.add_gridspec(6, 1, hspace=0.15, height_ratios=[3, 1, 1, 1, 1, 1])
+            
+            # 1. PRICE CHART with Moving Averages
+            ax1 = fig.add_subplot(gs[0])
+            
+            # Ensure we have price data
+            if 'Close' not in display_data.columns or len(display_data['Close'].dropna()) < 5:
+                plt.close()
+                raise ValueError("Insufficient price data for chart")
+            
+            # Price line
+            ax1.plot(display_data.index, display_data['Close'], 
+                    color=self.config.CHART_COLORS['price_line'],
+                    linewidth=1.5,
+                    label=f'{ticker} Price',
+                    zorder=5)
+            
+            # Moving averages with different colors
             ma_configs = [
-                (50, 'SMA_50', self.colors['ma_50'], '50 MA', '-'),
-                (100, 'SMA_100', self.colors['ma_20'], '100 MA', '--'),
-                (200, 'SMA_200', self.colors['ma_9'], '200 MA', '-.')
+                (20, self.config.CHART_COLORS['ma_20'], '20 MA'),
+                (50, self.config.CHART_COLORS['ma_50'], '50 MA'),
+                (200, self.config.CHART_COLORS['ma_200'], '200 MA')
             ]
-        else:
-            # For short/medium timeframes
-            ma_configs = [
-                (9, 'SMA_9', self.colors['ma_9'], '9 MA', '--'),
-                (20, 'SMA_20', self.colors['ma_20'], '20 MA', '-'),
-                (50, 'SMA_50', self.colors['ma_50'], '50 MA', '-'),
-            ]
-        
-        for ma_val, ma_col, color, label, linestyle in ma_configs:
-            if ma_col in display_data.columns:
-                ma_data = display_data[ma_col]
-                valid_mask = ~ma_data.isna()
-                if valid_mask.any():
-                    ax_price.plot(display_data.index[valid_mask], ma_data[valid_mask],
+            
+            for period_ma, color, label in ma_configs:
+                col = f'SMA_{period_ma}'
+                if col in display_data.columns:
+                    valid_data = display_data[col].dropna()
+                    if len(valid_data) > 0:
+                        ax1.plot(valid_data.index, valid_data,
                                 color=color,
-                                linewidth=self.style['ma_line_width'],
-                                alpha=0.7,
-                                label=label,
-                                linestyle=linestyle,
-                                zorder=4)
-        
-        # Plot Bollinger Bands if available (only for 1y and shorter for clarity)
-        if 'BB_Upper' in display_data.columns and 'BB_Lower' in display_data.columns and period not in ['2y', '3y', '5y']:
-            # Fill between Bollinger Bands
-            ax_price.fill_between(display_data.index, 
-                                display_data['BB_Lower'], 
+                                linewidth=1.2,
+                                alpha=0.8,
+                                label=label)
+            
+            # Bollinger Bands if available
+            if all(col in display_data.columns for col in ['BB_Upper', 'BB_Lower']):
+                ax1.fill_between(display_data.index, 
                                 display_data['BB_Upper'], 
-                                alpha=0.1, color=self.colors['bb_lower'],
+                                display_data['BB_Lower'],
+                                color=self.config.CHART_COLORS['grid'],
+                                alpha=0.2,
                                 label='Bollinger Bands')
             
-            # Plot BB lines
-            ax_price.plot(display_data.index, display_data['BB_Upper'],
-                         color=self.colors['bb_upper'],
-                         linewidth=0.6, alpha=0.5, linestyle='--')
-            ax_price.plot(display_data.index, display_data['BB_Lower'],
-                         color=self.colors['bb_lower'],
-                         linewidth=0.6, alpha=0.5, linestyle='--')
-        
-        # Set title based on timeframe
-        timeframe_label = {
-            '3m': '3 Months',
-            '6m': '6 Months',
-            '1y': '1 Year',
-            '2y': '2 Years',
-            '3y': '3 Years',
-            '5y': '5 Years'
-        }.get(period, period.upper())
-        
-        # FIXED: Changed 'title_size' to 'title_font_size'
-        ax_price.set_title(f'{ticker} - Technical Analysis ({timeframe_label})', 
-                          fontsize=self.style['title_font_size'], 
-                          fontweight='bold',
-                          color=self.colors['text'])
-        ax_price.set_ylabel('Price (USD)', color=self.colors['text'], fontsize=10)
-        
-        # Add legend only if we have multiple lines
-        handles, labels = ax_price.get_legend_handles_labels()
-        if len(handles) > 1:
-            ax_price.legend(loc='upper left', fontsize=8, framealpha=0.3)
-        
-        self._apply_style_to_axes(ax_price)
-        
-        # 2. VOLUME PANEL
-        ax_volume = fig.add_subplot(gs[1], sharex=ax_price)
-        
-        # Plot volume bars with thin styling
-        colors_volume = [
-            self.colors['volume_up'] if close >= open_ else self.colors['volume_down']
-            for close, open_ in zip(display_data['Close'], display_data['Open'])
-        ]
-        
-        # For long timeframes, use weekly volume bars for better visualization
-        if period in ['2y', '3y', '5y']:
-            # Resample to weekly volume
-            volume_resampled = display_data['Volume'].resample('W').sum()
-            prices_resampled = display_data['Close'].resample('W').ohlc()
+            ax1.set_title(f'{ticker} - Technical Analysis ({period})', 
+                         fontsize=14,
+                         fontweight='bold',
+                         pad=12)
+            ax1.set_ylabel('Price', fontsize=10)
+            ax1.legend(loc='upper left', fontsize=9)
+            ax1.grid(True, alpha=0.1)
+            ax1.tick_params(axis='both', which='major', labelsize=9)
             
-            colors_volume_resampled = [
-                self.colors['volume_up'] if close >= open_ else self.colors['volume_down']
-                for close, open_ in zip(prices_resampled['close'], prices_resampled['open'])
-            ]
+            # 2. VOLUME CHART
+            ax2 = fig.add_subplot(gs[1], sharex=ax1)
             
-            ax_volume.bar(volume_resampled.index, volume_resampled, 
-                         color=colors_volume_resampled, 
-                         alpha=0.5,
-                         width=5,
-                         edgecolor='none',
-                         linewidth=0.1)
-        else:
-            ax_volume.bar(display_data.index, display_data['Volume'], 
-                         color=colors_volume, 
-                         alpha=0.5,
-                         width=0.6,
-                         edgecolor='none',
-                         linewidth=0.1)
-        
-        # Plot volume moving average
-        if 'Volume_MA' in display_data.columns:
-            if period in ['2y', '3y', '5y']:
-                # Use weekly resampled volume MA
-                volume_ma_resampled = display_data['Volume_MA'].resample('W').mean()
-                ax_volume.plot(volume_ma_resampled.index, volume_ma_resampled,
-                              color=self.colors['text'],
-                              linewidth=0.8, alpha=0.7, label='Volume MA')
-            else:
-                ax_volume.plot(display_data.index, display_data['Volume_MA'],
-                              color=self.colors['text'],
-                              linewidth=0.8, alpha=0.7, label='20-day MA')
-        
-        ax_volume.set_ylabel('Volume', color=self.colors['text'], fontsize=10)
-        self._apply_style_to_axes(ax_volume)
-        
-        # 3. RSI PANEL
-        ax_rsi = fig.add_subplot(gs[2], sharex=ax_price)
-        
-        if 'RSI' in display_data.columns:
-            rsi_values = display_data['RSI']
-            rsi_valid = ~rsi_values.isna()
-            
-            if rsi_valid.any():
-                # For long timeframes, resample RSI for cleaner visualization
-                if period in ['2y', '3y', '5y']:
-                    rsi_resampled = display_data['RSI'].resample('W').mean()
-                    ax_rsi.plot(rsi_resampled.index, rsi_resampled, 
-                               color=self.colors['rsi_line'],
-                               linewidth=self.style['indicator_line_width'],
-                               alpha=0.8)
-                else:
-                    ax_rsi.plot(display_data.index[rsi_valid], rsi_values[rsi_valid], 
-                               color=self.colors['rsi_line'],
-                               linewidth=self.style['indicator_line_width'],
-                               alpha=0.8)
-                
-                # Add RSI levels
-                ax_rsi.axhline(y=70, color=self.colors['volume_down'], 
-                              linestyle='--', alpha=0.4, linewidth=0.5)
-                ax_rsi.axhline(y=30, color=self.colors['volume_up'], 
-                              linestyle='--', alpha=0.4, linewidth=0.5)
-                ax_rsi.axhline(y=50, color=self.colors['text'], 
-                              linestyle='--', alpha=0.2, linewidth=0.3)
-                
-                # Fill oversold/overbought areas
-                if period in ['2y', '3y', '5y']:
-                    ax_rsi.fill_between(rsi_resampled.index, 70, 100, 
-                                      alpha=0.05, color=self.colors['volume_down'])
-                    ax_rsi.fill_between(rsi_resampled.index, 0, 30, 
-                                      alpha=0.05, color=self.colors['volume_up'])
-                else:
-                    ax_rsi.fill_between(display_data.index[rsi_valid], 70, 100, 
-                                      alpha=0.05, color=self.colors['volume_down'])
-                    ax_rsi.fill_between(display_data.index[rsi_valid], 0, 30, 
-                                      alpha=0.05, color=self.colors['volume_up'])
-                
-                ax_rsi.set_ylim(0, 100)
-                ax_rsi.set_ylabel('RSI', color=self.colors['text'], fontsize=10)
-                self._apply_style_to_axes(ax_rsi)
-        
-        # 4. MACD PANEL
-        ax_macd = fig.add_subplot(gs[3], sharex=ax_price)
-        
-        if 'MACD' in display_data.columns and 'MACD_Signal' in display_data.columns:
-            macd_valid = ~display_data['MACD'].isna() & ~display_data['MACD_Signal'].isna()
-            
-            if macd_valid.any():
-                # For long timeframes, resample MACD
-                if period in ['2y', '3y', '5y']:
-                    macd_resampled = display_data['MACD'].resample('W').mean()
-                    signal_resampled = display_data['MACD_Signal'].resample('W').mean()
+            # Volume bars
+            if 'Volume' in display_data.columns:
+                try:
+                    volume_data = display_data['Volume'].fillna(0)
+                    close_data = display_data['Close']
                     
-                    ax_macd.plot(macd_resampled.index, macd_resampled, 
-                                color=self.colors['macd_line'],
-                                linewidth=self.style['indicator_line_width'],
-                                alpha=0.8,
+                    # Volume coloring based on price movement
+                    colors = []
+                    for i in range(len(volume_data)):
+                        if i == 0:
+                            colors.append(self.config.CHART_COLORS['volume_up'])
+                        else:
+                            try:
+                                if close_data.iloc[i] >= close_data.iloc[i-1]:
+                                    colors.append(self.config.CHART_COLORS['volume_up'])
+                                else:
+                                    colors.append(self.config.CHART_COLORS['volume_down'])
+                            except:
+                                colors.append(self.config.CHART_COLORS['volume_up'])
+                    
+                    # Plot volume bars
+                    ax2.bar(volume_data.index, volume_data, 
+                           color=colors, alpha=0.6, width=0.8, label='Volume')
+                    
+                    # Volume moving average
+                    if 'Volume_MA_20' in display_data.columns:
+                        vol_ma = display_data['Volume_MA_20'].dropna()
+                        if len(vol_ma) > 0:
+                            ax2.plot(vol_ma.index, vol_ma,
+                                    color='yellow',
+                                    linewidth=0.8,
+                                    alpha=0.7,
+                                    label='20-day Volume MA')
+                except Exception as e:
+                    print(f"Volume chart error: {e}")
+            
+            ax2.set_ylabel('Volume', fontsize=10)
+            ax2.legend(loc='upper left', fontsize=8)
+            ax2.grid(True, alpha=0.1)
+            ax2.tick_params(axis='both', which='major', labelsize=8)
+            
+            # 3. RSI CHART
+            ax3 = fig.add_subplot(gs[2], sharex=ax1)
+            
+            if 'RSI' in display_data.columns:
+                try:
+                    rsi_data = display_data['RSI'].dropna()
+                    if len(rsi_data) > 0:
+                        ax3.plot(rsi_data.index, rsi_data,
+                                color=self.config.CHART_COLORS['rsi_line'],
+                                linewidth=1.0,
+                                label='RSI')
+                        
+                        # RSI levels with different styles
+                        ax3.axhline(y=70, color=self.config.CHART_COLORS['volume_down'], 
+                                  linestyle='--', alpha=0.6, linewidth=0.8, label='Overbought (70)')
+                        ax3.axhline(y=30, color=self.config.CHART_COLORS['volume_up'], 
+                                  linestyle='--', alpha=0.6, linewidth=0.8, label='Oversold (30)')
+                        ax3.axhline(y=50, color='white', 
+                                  linestyle=':', alpha=0.3, linewidth=0.5)
+                        
+                        # Fill overbought/oversold areas
+                        ax3.fill_between(rsi_data.index, 70, 100, 
+                                        color='red', alpha=0.1)
+                        ax3.fill_between(rsi_data.index, 0, 30, 
+                                        color='green', alpha=0.1)
+                        
+                        ax3.set_ylim(0, 100)
+                        ax3.set_ylabel('RSI', fontsize=10)
+                        ax3.legend(loc='upper left', fontsize=8)
+                        ax3.grid(True, alpha=0.1)
+                except Exception as e:
+                    print(f"RSI chart error: {e}")
+            
+            ax3.tick_params(axis='both', which='major', labelsize=8)
+            
+            # 4. MACD CHART
+            ax4 = fig.add_subplot(gs[3], sharex=ax1)
+            
+            if 'MACD' in display_data.columns and 'MACD_Signal' in display_data.columns:
+                try:
+                    macd_data = display_data['MACD'].dropna()
+                    signal_data = display_data['MACD_Signal'].dropna()
+                    
+                    if len(macd_data) > 0 and len(signal_data) > 0:
+                        # Plot MACD and Signal lines
+                        ax4.plot(macd_data.index, macd_data,
+                                color=self.config.CHART_COLORS['macd_line'],
+                                linewidth=1.0,
                                 label='MACD')
-                    
-                    ax_macd.plot(signal_resampled.index, signal_resampled, 
-                                color=self.colors['macd_signal'],
-                                linewidth=self.style['indicator_line_width'],
-                                alpha=0.8,
+                        
+                        ax4.plot(signal_data.index, signal_data,
+                                color=self.config.CHART_COLORS['macd_signal'],
+                                linewidth=1.0,
                                 label='Signal')
+                        
+                        # Plot MACD histogram
+                        if 'MACD_Hist' in display_data.columns:
+                            hist_data = display_data['MACD_Hist'].dropna()
+                            colors = ['green' if x >= 0 else 'red' for x in hist_data]
+                            ax4.bar(hist_data.index, hist_data,
+                                   color=colors, alpha=0.5, width=0.8, label='Histogram')
+                        
+                        ax4.axhline(y=0, color='white', linestyle='-', alpha=0.3, linewidth=0.5)
+                        ax4.set_ylabel('MACD', fontsize=10)
+                        ax4.legend(loc='upper left', fontsize=8)
+                        ax4.grid(True, alpha=0.1)
+                except Exception as e:
+                    print(f"MACD chart error: {e}")
+            
+            ax4.tick_params(axis='both', which='major', labelsize=8)
+            
+            # 5. A/D LINE CHART
+            ax5 = fig.add_subplot(gs[4], sharex=ax1)
+            
+            if 'AD_Line' in display_data.columns:
+                try:
+                    ad_data = display_data['AD_Line'].dropna()
+                    if len(ad_data) > 0:
+                        ax5.plot(ad_data.index, ad_data,
+                                color='cyan',
+                                linewidth=1.0,
+                                label='A/D Line')
+                        
+                        # Calculate and plot A/D Line EMA
+                        if len(ad_data) > 20:
+                            ad_ema = ad_data.ewm(span=20, adjust=False).mean()
+                            ax5.plot(ad_ema.index, ad_ema,
+                                    color='magenta',
+                                    linewidth=0.8,
+                                    alpha=0.7,
+                                    label='A/D EMA (20)')
+                        
+                        ax5.set_ylabel('A/D Line', fontsize=10)
+                        ax5.legend(loc='upper left', fontsize=8)
+                        ax5.grid(True, alpha=0.1)
+                except Exception as e:
+                    print(f"A/D Line chart error: {e}")
+            
+            ax5.tick_params(axis='both', which='major', labelsize=8)
+            
+            # 6. STOCHASTIC CHART
+            ax6 = fig.add_subplot(gs[5], sharex=ax1)
+            
+            if 'Stoch_%K' in display_data.columns and 'Stoch_%D' in display_data.columns:
+                try:
+                    stoch_k = display_data['Stoch_%K'].dropna()
+                    stoch_d = display_data['Stoch_%D'].dropna()
                     
-                    # MACD histogram (resampled)
-                    if 'MACD_Hist' in display_data.columns:
-                        hist_resampled = display_data['MACD_Hist'].resample('W').mean()
-                        hist_valid = ~hist_resampled.isna()
-                        if hist_valid.any():
-                            colors_hist = [
-                                self.colors['macd_line'] if val >= 0 else self.colors['macd_signal']
-                                for val in hist_resampled[hist_valid]
-                            ]
-                            
-                            ax_macd.bar(hist_resampled.index[hist_valid], 
-                                       hist_resampled[hist_valid], 
-                                       color=colors_hist,
-                                       alpha=0.4,
-                                       width=5,
-                                       edgecolor='none',
-                                       linewidth=0.1)
-                else:
-                    # Standard plotting for shorter timeframes
-                    ax_macd.plot(display_data.index[macd_valid], display_data['MACD'][macd_valid], 
-                                color=self.colors['macd_line'],
-                                linewidth=self.style['indicator_line_width'],
-                                alpha=0.8,
-                                label='MACD')
-                    
-                    ax_macd.plot(display_data.index[macd_valid], display_data['MACD_Signal'][macd_valid], 
-                                color=self.colors['macd_signal'],
-                                linewidth=self.style['indicator_line_width'],
-                                alpha=0.8,
-                                label='Signal')
-                    
-                    # MACD histogram
-                    if 'MACD_Hist' in display_data.columns:
-                        hist_valid = ~display_data['MACD_Hist'].isna()
-                        if hist_valid.any():
-                            colors_hist = [
-                                self.colors['macd_line'] if val >= 0 else self.colors['macd_signal']
-                                for val in display_data['MACD_Hist'][hist_valid]
-                            ]
-                            
-                            ax_macd.bar(display_data.index[hist_valid], 
-                                       display_data['MACD_Hist'][hist_valid], 
-                                       color=colors_hist,
-                                       alpha=0.4,
-                                       width=0.5,
-                                       edgecolor='none',
-                                       linewidth=0.1)
-                
-                ax_macd.axhline(y=0, color=self.colors['text'], 
-                               linestyle='-', linewidth=0.3, alpha=0.3)
-                
-                ax_macd.set_ylabel('MACD', color=self.colors['text'], fontsize=10)
-                ax_macd.legend(loc='upper left', fontsize=7, framealpha=0.3)
-                self._apply_style_to_axes(ax_macd)
-        
-        # Format x-axis based on timeframe
-        bottom_ax = ax_macd if 'MACD' in display_data.columns else ax_rsi if 'RSI' in display_data.columns else ax_volume
-        
-        # Adjust date formatting based on period
-        if period == '3m':
-            bottom_ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
-            bottom_ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
-        elif period == '6m':
-            bottom_ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
-            bottom_ax.xaxis.set_major_locator(mdates.MonthLocator())
-        elif period == '1y':
-            bottom_ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-            bottom_ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        elif period == '2y':
-            bottom_ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-            bottom_ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-        elif period == '3y':
-            bottom_ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-            bottom_ax.xaxis.set_major_locator(mdates.MonthLocator(interval=4))
-        elif period == '5y':
-            bottom_ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-            bottom_ax.xaxis.set_major_locator(mdates.YearLocator())
-        else:
-            bottom_ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
-        
-        plt.setp(bottom_ax.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=8)
-        
-        plt.tight_layout()
-        
-        # Save to temporary file
-        temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-        plt.savefig(temp_file.name, 
-                   facecolor=self.colors['background'], 
-                   edgecolor='none', 
-                   bbox_inches='tight',
-                   dpi=self.style['dpi'])
-        plt.close()
-        
-        return temp_file.name
+                    if len(stoch_k) > 0 and len(stoch_d) > 0:
+                        ax6.plot(stoch_k.index, stoch_k,
+                                color='yellow',
+                                linewidth=1.0,
+                                label='%K')
+                        
+                        ax6.plot(stoch_d.index, stoch_d,
+                                color='orange',
+                                linewidth=1.0,
+                                label='%D')
+                        
+                        # Stochastic levels
+                        ax6.axhline(y=80, color='red', 
+                                  linestyle='--', alpha=0.5, linewidth=0.6, label='Overbought (80)')
+                        ax6.axhline(y=20, color='green', 
+                                  linestyle='--', alpha=0.5, linewidth=0.6, label='Oversold (20)')
+                        
+                        # Fill overbought/oversold areas
+                        ax6.fill_between(stoch_k.index, 80, 100, 
+                                        color='red', alpha=0.1)
+                        ax6.fill_between(stoch_k.index, 0, 20, 
+                                        color='green', alpha=0.1)
+                        
+                        ax6.set_ylim(0, 100)
+                        ax6.set_ylabel('Stochastic', fontsize=10)
+                        ax6.legend(loc='upper left', fontsize=8)
+                        ax6.grid(True, alpha=0.1)
+                except Exception as e:
+                    print(f"Stochastic chart error: {e}")
+            
+            ax6.tick_params(axis='both', which='major', labelsize=8)
+            
+            # Format dates based on period
+            self._format_date_axis(ax6, period, display_data)
+            
+            plt.tight_layout(pad=1.5)
+            
+            # Save to temp file
+            temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            plt.savefig(temp_file.name, 
+                       facecolor=self.config.CHART_COLORS['background'],
+                       bbox_inches='tight',
+                       dpi=100,
+                       format='png',
+                       transparent=False)
+            plt.close()
+            
+            print(f"✅ Chart generated: {temp_file.name}")
+            return temp_file.name
+            
+        except Exception as e:
+            print(f"❌ Chart generation error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
+    def _get_days_for_period(self, period: str, max_days: int) -> int:
+        """Get appropriate number of days to show for each period"""
+        period_map = {
+            '3m': min(63, max_days),
+            '6m': min(126, max_days),
+            '1y': min(252, max_days),
+            '2y': min(504, max_days),
+            '3y': min(756, max_days),
+            '5y': min(1260, max_days),
+            'max': max_days
+        }
+        return period_map.get(period, min(252, max_days))
+    
+    def _format_date_axis(self, ax, period: str, data: pd.DataFrame):
+        """Format date axis based on timeframe"""
+        try:
+            if len(data) < 10:
+                return
+            
+            # Determine date format based on period length
+            date_range = (data.index[-1] - data.index[0]).days
+            
+            if date_range < 90:  # Less than 3 months
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+                ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+                ax.xaxis.set_minor_locator(mdates.DayLocator(interval=1))
+            elif date_range < 180:  # Less than 6 months
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+                ax.xaxis.set_major_locator(mdates.MonthLocator())
+                ax.xaxis.set_minor_locator(mdates.WeekdayLocator(interval=1))
+            elif date_range < 365:  # Less than 1 year
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+                ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+            elif date_range < 730:  # Less than 2 years
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+                ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+            else:  # More than 2 years
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+                ax.xaxis.set_major_locator(mdates.YearLocator())
+            
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=8)
+            
+            # Adjust x-axis limits to show all data
+            if len(data) > 0:
+                ax.set_xlim([data.index[0], data.index[-1]])
+        except Exception as e:
+            print(f"Date formatting error: {e}")
+            # Fallback to simple formatting
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=8)
