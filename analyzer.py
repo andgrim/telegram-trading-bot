@@ -316,6 +316,10 @@ class TradingAnalyzer:
     def _fetch_direct(self, ticker: str, period: str) -> Optional[pd.DataFrame]:
         """Direct download using yf.download"""
         try:
+            # Set custom user agent to avoid blocking
+            import yfinance as yf
+            yf.utils.get_user_agent = lambda: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            
             data = yf.download(
                 tickers=ticker,
                 period=period,
@@ -334,6 +338,10 @@ class TradingAnalyzer:
     def _fetch_ticker_object(self, ticker: str, period: str) -> Optional[pd.DataFrame]:
         """Fetch using yf.Ticker object"""
         try:
+            # Set custom user agent
+            import yfinance as yf
+            yf.utils.get_user_agent = lambda: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            
             ticker_obj = yf.Ticker(ticker)
             data = ticker_obj.history(
                 period=period,
@@ -370,6 +378,10 @@ class TradingAnalyzer:
     async def _get_ticker_info(self, ticker: str, data: pd.DataFrame, original_ticker: str) -> Dict:
         """Get ticker information"""
         try:
+            # Set custom user agent
+            import yfinance as yf
+            yf.utils.get_user_agent = lambda: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            
             ticker_obj = yf.Ticker(ticker)
             info = ticker_obj.info
             

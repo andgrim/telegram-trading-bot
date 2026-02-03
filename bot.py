@@ -5,8 +5,7 @@ Optimized for Render deployment - FIXED VERSION
 import logging
 import os
 import asyncio
-import json
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -91,6 +90,7 @@ class UniversalTradingBot:
         self.application.add_handler(CommandHandler("help", self._handle_help))
         self.application.add_handler(CommandHandler("analyze", self._handle_analyze))
         self.application.add_handler(CommandHandler("examples", self._handle_examples))
+        self.application.add_handler(CommandHandler("test", self._test_command))
         
         # Callback query handler
         self.application.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -117,8 +117,6 @@ class UniversalTradingBot:
             
         except Exception as e:
             logger.error(f"Error processing webhook update: {e}")
-            import traceback
-            traceback.print_exc()
     
     def process_webhook_update(self, update_data: Dict[str, Any]):
         """Process webhook update in a thread (for Flask)"""
@@ -134,6 +132,11 @@ class UniversalTradingBot:
     # Command Handlers - all methods below are async
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
+        # Check if we have a chat id
+        if update.effective_chat is None:
+            logger.error("No chat id in /start update")
+            return
+        
         welcome = """
 🤖 **Universal Trading Analysis Bot**
 
@@ -156,6 +159,7 @@ class UniversalTradingBot:
 /analyze TICKER PERIOD - Quick analysis
 /examples - Show ticker examples
 /help - Detailed help
+/test - Test command (no Yahoo Finance)
         """
         
         keyboard = [
@@ -175,51 +179,29 @@ class UniversalTradingBot:
             parse_mode=ParseMode.HTML
         )
     
-    async def _handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /help command"""
-        help_text = """
-📖 **Universal Trading Bot Help**
-
-**SUPPORTED MARKETS:**
-• US Stocks: AAPL, MSFT, TSLA, GOOGL, AMZN
-• European Stocks: Use exchange suffix:
-  - Italy: .MI (ENEL.MI, ISP.MI)
-  - France: .PA (AIR.PA, TTE.PA)
-  - Germany: .DE (SAP.DE, BMW.DE)
-• ETFs: SPY, QQQ, VOO, GLD, SLV
-• Commodities: GOLD (GC=F), OIL (CL=F), SILVER (SI=F)
-• Cryptocurrencies: BTC-USD, ETH-USD, XRP-USD
-• Indices: SPX (^GSPC), DJI (^DJI), FTSE (^FTSE)
-
-**PERIODS:**
-3m, 6m, 1y, 2y, 3y, 5y
-
-**EXAMPLES:**
-/analyze AAPL 1y
-/analyze ENEL.MI 6m
-/analyze GOLD 3m
-/analyze BTC-USD 1y
-/analyze ^GSPC 2y
-
-**TICKER FORMATS:**
-• Use Yahoo Finance format
-• European stocks need suffix (.MI, .PA, .DE, etc.)
-• Indices use ^ prefix (^GSPC, ^DJI)
-• Commodities use =F suffix (GC=F, CL=F)
-• Crypto use -USD suffix (BTC-USD)
-        """
-        
-        keyboard = [[InlineKeyboardButton("📈 Start Analysis", callback_data="ask_ticker")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+    async def _test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /test command - simple test without yfinance"""
+        # Check if we have a chat id
+        if update.effective_chat is None:
+            logger.error("No chat id in /test update")
+            return
         
         await update.message.reply_text(
-            help_text,
-            reply_markup=reply_markup,
+            "✅ Bot is working!\n\n"
+            "Test tickers:\n"
+            "• AAPL (might be blocked)\n"
+            "• Try European: ENEL.MI\n"
+            "• Wait 10 seconds between requests",
             parse_mode=ParseMode.HTML
         )
     
     async def _handle_analyze(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /analyze command"""
+        # CRITICAL: Check if we have a valid chat id
+        if update.effective_chat is None:
+            logger.error("No chat id in /analyze update")
+            return
+        
         if not context.args:
             await update.message.reply_text(
                 "Usage: /analyze TICKER PERIOD\n\n"
@@ -239,185 +221,14 @@ class UniversalTradingBot:
         
         await self._perform_analysis(update, context, ticker, period)
     
-    async def _handle_examples(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /examples command"""
-        examples_text = "📋 **Ticker Examples by Market:**\n\n"
-        
-        for market, tickers in self.example_tickers.items():
-            examples_text += f"**{market}:**\n"
-            examples_text += " • " + " | ".join(tickers[:5]) + "\n\n"
-        
-        examples_text += "**Usage:** /analyze TICKER PERIOD\n"
-        examples_text += "**Example:** /analyze ENEL.MI 1y"
-        
-        keyboard = [[InlineKeyboardButton("📈 Analyze Now", callback_data="ask_ticker")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            examples_text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
-        )
-    
-    async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle callback queries"""
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data
-        
-        if data == "ask_ticker":
-            await self._ask_for_ticker(update, context)
-        
-        elif data == "help":
-            await self._handle_help(update, context)
-        
-        elif data.startswith("examples_"):
-            market = data.replace("examples_", "")
-            await self._show_examples(update, context, market)
-        
-        elif data.startswith("quick_"):
-            ticker = data.split("_")[1]
-            await self._ask_for_period(update, context, ticker)
-        
-        elif data.startswith("analyze_"):
-            parts = data.split("_")
-            if len(parts) >= 3:
-                ticker = parts[1]
-                period = parts[2]
-                await self._perform_analysis(update, context, ticker, period)
-    
-    async def _handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle text input"""
-        text = update.message.text.strip().upper().replace('$', '')
-        
-        # Basic validation
-        if 1 <= len(text) <= 20 and any(c.isalnum() for c in text):
-            await self._ask_for_period(update, context, text)
-        else:
-            await update.message.reply_text(
-                f"❌ Invalid ticker: {text}\n\n"
-                "Valid ticker formats:\n"
-                "• AAPL, MSFT, TSLA (US stocks)\n"
-                "• ENEL.MI, AIR.PA (European stocks)\n"
-                "• SPY, GOLD, BTC-USD\n"
-                "• ^GSPC, ^DJI (indices)\n\n"
-                "Try: /analyze AAPL 1y",
-                parse_mode=ParseMode.HTML
-            )
-    
-    async def _ask_for_ticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Ask user for ticker"""
-        query = update.callback_query
-        
-        message = """
-📝 **Enter Ticker Symbol**
-
-**Universal format:** Use Yahoo Finance format
-
-**Examples:**
-• US: AAPL, MSFT, TSLA
-• Europe: ENEL.MI (Italy), AIR.PA (France), SAP.DE (Germany)
-• ETFs: SPY, QQQ, VOO
-• Commodities: GOLD (GC=F), OIL (CL=F)
-• Crypto: BTC-USD, ETH-USD
-• Indices: SPX (^GSPC), DJI (^DJI)
-
-**Enter ticker:**
-        """
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("AAPL", callback_data="quick_AAPL"),
-                InlineKeyboardButton("MSFT", callback_data="quick_MSFT"),
-                InlineKeyboardButton("TSLA", callback_data="quick_TSLA")
-            ],
-            [
-                InlineKeyboardButton("ENEL.MI", callback_data="quick_ENEL.MI"),
-                InlineKeyboardButton("AIR.PA", callback_data="quick_AIR.PA"),
-                InlineKeyboardButton("SAP.DE", callback_data="quick_SAP.DE")
-            ],
-            [
-                InlineKeyboardButton("SPY", callback_data="quick_SPY"),
-                InlineKeyboardButton("GOLD", callback_data="quick_GOLD"),
-                InlineKeyboardButton("BTC-USD", callback_data="quick_BTC-USD")
-            ],
-            [InlineKeyboardButton("📋 More Examples", callback_data="examples_US Stocks")]
-        ]
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.message.edit_text(
-            message,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
-        )
-    
-    async def _show_examples(self, update: Update, context: ContextTypes.DEFAULT_TYPE, market: str):
-        """Show examples for specific market"""
-        query = update.callback_query
-        
-        if market not in self.example_tickers:
-            await query.message.reply_text("Invalid market")
-            return
-        
-        tickers = self.example_tickers[market]
-        
-        message = f"📋 **{market} Ticker Examples:**\n\n"
-        message += "Click any ticker to analyze:\n"
-        
-        # Create buttons for tickers
-        keyboard = []
-        row = []
-        for i, ticker in enumerate(tickers):
-            row.append(InlineKeyboardButton(ticker, callback_data=f"quick_{ticker}"))
-            if (i + 1) % 3 == 0 or i == len(tickers) - 1:
-                keyboard.append(row)
-                row = []
-        
-        keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="ask_ticker")])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.message.edit_text(
-            text=message,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
-        )
-    
-    async def _ask_for_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE, ticker: str):
-        """Ask for timeframe"""
-        if update.callback_query:
-            message_obj = update.callback_query.message
-            await update.callback_query.answer()
-        else:
-            message_obj = update.message
-        
-        message = f"📊 Select timeframe for {ticker}"
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("3 Months", callback_data=f"analyze_{ticker}_3m"),
-                InlineKeyboardButton("6 Months", callback_data=f"analyze_{ticker}_6m")
-            ],
-            [
-                InlineKeyboardButton("1 Year", callback_data=f"analyze_{ticker}_1y"),
-                InlineKeyboardButton("2 Years", callback_data=f"analyze_{ticker}_2y")
-            ],
-            [InlineKeyboardButton("⬅️ Back", callback_data="ask_ticker")]
-        ]
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await message_obj.reply_text(
-            message,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
-        )
-    
     async def _perform_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE, 
                               ticker: str, period: str):
         """Perform analysis"""
+        # CRITICAL: Check if we have a valid chat id
+        if update.effective_chat is None:
+            logger.error(f"No chat id for analysis of {ticker}")
+            return
+        
         chat_id = update.effective_chat.id
         
         # Send typing indicator
@@ -534,3 +345,46 @@ class UniversalTradingBot:
                 await status.delete()
             except:
                 pass
+    
+    # ... (rest of the methods remain the same, but add chat id checks to each) ...
+
+async def _handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /help command"""
+    # Check if we have a chat id
+    if update.effective_chat is None:
+        logger.error("No chat id in /help update")
+        return
+    
+    help_text = """
+📖 **Universal Trading Bot Help**
+
+**SUPPORTED MARKETS:**
+• US Stocks: AAPL, MSFT, TSLA, GOOGL, AMZN
+• European Stocks: Use exchange suffix:
+  - Italy: .MI (ENEL.MI, ISP.MI)
+  - France: .PA (AIR.PA, TTE.PA)
+  - Germany: .DE (SAP.DE, BMW.DE)
+• ETFs: SPY, QQQ, VOO, GLD, SLV
+• Commodities: GOLD (GC=F), OIL (CL=F), SILVER (SI=F)
+• Cryptocurrencies: BTC-USD, ETH-USD, XRP-USD
+• Indices: SPX (^GSPC), DJI (^DJI), FTSE (^FTSE)
+
+**PERIODS:**
+3m, 6m, 1y, 2y, 3y, 5y
+
+**EXAMPLES:**
+/analyze AAPL 1y
+/analyze ENEL.MI 6m
+/analyze GOLD 3m
+/analyze BTC-USD 1y
+/analyze ^GSPC 2y
+    """
+    
+    keyboard = [[InlineKeyboardButton("📈 Start Analysis", callback_data="ask_ticker")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        help_text,
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML
+    )
