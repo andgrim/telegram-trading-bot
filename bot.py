@@ -1,6 +1,6 @@
 """
 Universal Trading Bot for Telegram - Webhook Version
-Optimized for Render deployment
+Optimized for Render deployment - FIXED VERSION
 """
 import logging
 import os
@@ -13,7 +13,6 @@ from telegram.ext import (
     MessageHandler, filters, ContextTypes
 )
 from telegram.constants import ParseMode, ChatAction
-import threading
 
 from analyzer import TradingAnalyzer
 from chart_generator import ChartGenerator
@@ -23,14 +22,14 @@ from config import CONFIG
 logger = logging.getLogger(__name__)
 
 class UniversalTradingBot:
-    """Universal Telegram bot for ALL markets - Webhook version"""
+    """Universal Telegram bot for ALL markets - Webhook version FIXED"""
     
     def __init__(self):
         self.config = CONFIG
         self.analyzer = TradingAnalyzer()
         self.chart_generator = ChartGenerator()
         
-        # Telegram application
+        # Telegram application - will be created in initialize()
         self.application = None
         self.initialized = False
         
@@ -43,13 +42,11 @@ class UniversalTradingBot:
             'Cryptocurrencies': ['BTC-USD', 'ETH-USD', 'XRP-USD', 'SOL-USD'],
             'Indices': ['^GSPC', '^DJI', '^IXIC', '^FTSE', '^GDAXI'],
         }
-        
-        logger.info("Universal Trading Bot initialized (Webhook mode)")
     
-    def initialize(self):
-        """Initialize the bot application"""
+    def initialize(self) -> bool:
+        """Initialize the bot application - SYNC version for Flask"""
         if self.initialized:
-            return
+            return True
         
         try:
             token = self.config.TELEGRAM_TOKEN
@@ -57,21 +54,31 @@ class UniversalTradingBot:
                 logger.error("TELEGRAM_TOKEN not found in environment")
                 return False
             
-            # Create application
+            logger.info("Initializing bot application...")
+            
+            # Create application on current event loop
             self.application = Application.builder().token(token).build()
             
             # Add handlers
             self._setup_handlers()
             
-            self.initialized = True
-            logger.info("Bot application initialized successfully")
+            # Initialize the application
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.application.initialize())
             
-            # Set webhook in background
-            threading.Thread(target=self._setup_webhook_background).start()
+            # Start the application (but don't run polling)
+            loop.run_until_complete(self.application.start())
+            
+            self.initialized = True
+            logger.info("✅ Bot application initialized successfully")
             
             return True
+            
         except Exception as e:
             logger.error(f"Failed to initialize bot: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _setup_handlers(self):
@@ -95,58 +102,8 @@ class UniversalTradingBot:
         
         logger.info("All handlers setup completed")
     
-    def _setup_webhook_background(self):
-        """Setup webhook in background thread"""
-        try:
-            bot_url = os.getenv('RENDER_EXTERNAL_URL')
-            secret = os.getenv('WEBHOOK_SECRET', 'default_secret_change_me')
-            
-            if not bot_url:
-                logger.warning("RENDER_EXTERNAL_URL not set, webhook not configured")
-                return
-            
-            webhook_url = f"{bot_url}/webhook/{secret}"
-            
-            # Run in async context
-            asyncio.run(self._set_webhook_async(webhook_url))
-            
-        except Exception as e:
-            logger.error(f"Webhook setup failed: {e}")
-    
-    async def _set_webhook_async(self, webhook_url: str):
-        """Async function to set webhook"""
-        if not self.application:
-            return
-        
-        try:
-            await self.application.bot.set_webhook(
-                url=webhook_url,
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True
-            )
-            logger.info(f"Webhook set successfully: {webhook_url}")
-        except Exception as e:
-            logger.error(f"Failed to set webhook: {e}")
-    
-    def set_webhook(self, bot_url: str, secret: str) -> bool:
-        """Set webhook manually"""
-        try:
-            webhook_url = f"{bot_url}/webhook/{secret}"
-            
-            # Run in new event loop
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            loop.run_until_complete(self._set_webhook_async(webhook_url))
-            loop.close()
-            
-            return True
-        except Exception as e:
-            logger.error(f"Manual webhook setup failed: {e}")
-            return False
-    
-    def process_webhook_update(self, update_data: Dict[str, Any]):
-        """Process incoming webhook update"""
+    async def process_update(self, update_data: Dict[str, Any]):
+        """Process incoming webhook update - ASYNC version"""
         if not self.application or not self.initialized:
             logger.error("Bot not initialized")
             return
@@ -155,19 +112,26 @@ class UniversalTradingBot:
             # Create update object
             update = Update.de_json(update_data, self.application.bot)
             
-            # Process update
-            asyncio.run(self._process_update_async(update))
+            # Process update through the application
+            await self.application.process_update(update)
+            
         except Exception as e:
             logger.error(f"Error processing webhook update: {e}")
+            import traceback
+            traceback.print_exc()
     
-    async def _process_update_async(self, update: Update):
-        """Process update asynchronously"""
+    def process_webhook_update(self, update_data: Dict[str, Any]):
+        """Process webhook update in a thread (for Flask)"""
         try:
-            await self.application.process_update(update)
+            # Run async function in new event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.process_update(update_data))
+            loop.close()
         except Exception as e:
-            logger.error(f"Error in async update processing: {e}")
+            logger.error(f"Error in webhook processing thread: {e}")
     
-    # Command Handlers
+    # Command Handlers - all methods below are async
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
         welcome = """
