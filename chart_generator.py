@@ -1,5 +1,6 @@
 """
-Chart Generator for Trading Analysis
+Chart Generator for Trading Analysis - Simplified Local Version
+Only includes Price, Volume+A/D, RSI, and MACD
 """
 import matplotlib
 matplotlib.use('Agg')
@@ -14,7 +15,7 @@ import os
 from config import CONFIG
 
 class ChartGenerator:
-    """Generate comprehensive charts with multiple indicators"""
+    """Generate simplified charts with key indicators"""
     
     def __init__(self):
         self.config = CONFIG
@@ -36,51 +37,35 @@ class ChartGenerator:
         })
     
     def generate_price_chart(self, data: pd.DataFrame, ticker: str, period: str) -> str:
-        """Generate comprehensive price chart with indicators"""
+        """Generate simplified price chart with 4 indicators"""
         if len(data) < 10:
             raise ValueError(f"Not enough data for chart: {len(data)} rows")
         
         try:
-            # Clean the data - ensure all columns are 1D
+            # Clean the data
             display_data = data.copy()
-            
-            # Debug: Print data info
-            print(f"📊 Chart data shape: {display_data.shape}")
-            print(f"📊 Chart columns: {list(display_data.columns)[:15]}")
             
             # Ensure index is datetime
             if not isinstance(display_data.index, pd.DatetimeIndex):
                 display_data.index = pd.to_datetime(display_data.index)
             
-            # Flatten any 2D columns
-            for col in display_data.columns:
-                if col in display_data.columns:
-                    values = display_data[col].values
-                    if hasattr(values, 'ndim') and values.ndim > 1:
-                        display_data[col] = pd.Series(values.flatten(), index=display_data.index)
-            
-            # Determine days to show based on period
+            # Determine days to show
             days_to_show = self._get_days_for_period(period, len(display_data))
             
             # Ensure we have enough data
             if len(display_data) > days_to_show:
                 display_data = display_data.tail(days_to_show)
             
-            # Create figure with appropriate size
-            fig = plt.figure(figsize=(16, 14), 
+            # Create figure with 4 subplots
+            fig = plt.figure(figsize=(14, 12), 
                             facecolor=self.config.CHART_COLORS['background'],
                             dpi=100)
             
-            # Create subplots grid - 6 subplots
-            gs = fig.add_gridspec(6, 1, hspace=0.15, height_ratios=[3, 1, 1, 1, 1, 1])
+            # Create subplots grid - 4 subplots
+            gs = fig.add_gridspec(4, 1, hspace=0.15, height_ratios=[3, 1, 1, 1])
             
             # 1. PRICE CHART with Moving Averages
             ax1 = fig.add_subplot(gs[0])
-            
-            # Ensure we have price data
-            if 'Close' not in display_data.columns or len(display_data['Close'].dropna()) < 5:
-                plt.close()
-                raise ValueError("Insufficient price data for chart")
             
             # Price line
             ax1.plot(display_data.index, display_data['Close'], 
@@ -89,9 +74,9 @@ class ChartGenerator:
                     label=f'{ticker} Price',
                     zorder=5)
             
-            # Moving averages with different colors
+            # Moving averages with different colors (20 MA in green)
             ma_configs = [
-                (20, self.config.CHART_COLORS['ma_20'], '20 MA'),
+                (20, self.config.CHART_COLORS['ma_20'], '20 MA'),  # Green
                 (50, self.config.CHART_COLORS['ma_50'], '50 MA'),
                 (200, self.config.CHART_COLORS['ma_200'], '200 MA')
             ]
@@ -107,15 +92,6 @@ class ChartGenerator:
                                 alpha=0.8,
                                 label=label)
             
-            # Bollinger Bands if available
-            if all(col in display_data.columns for col in ['BB_Upper', 'BB_Lower']):
-                ax1.fill_between(display_data.index, 
-                                display_data['BB_Upper'], 
-                                display_data['BB_Lower'],
-                                color=self.config.CHART_COLORS['grid'],
-                                alpha=0.2,
-                                label='Bollinger Bands')
-            
             ax1.set_title(f'{ticker} - Technical Analysis ({period})', 
                          fontsize=14,
                          fontweight='bold',
@@ -125,7 +101,7 @@ class ChartGenerator:
             ax1.grid(True, alpha=0.1)
             ax1.tick_params(axis='both', which='major', labelsize=9)
             
-            # 2. VOLUME CHART
+            # 2. VOLUME CHART with A/D Line overlay
             ax2 = fig.add_subplot(gs[1], sharex=ax1)
             
             # Volume bars
@@ -152,20 +128,28 @@ class ChartGenerator:
                     ax2.bar(volume_data.index, volume_data, 
                            color=colors, alpha=0.6, width=0.8, label='Volume')
                     
-                    # Volume moving average
-                    if 'Volume_MA_20' in display_data.columns:
-                        vol_ma = display_data['Volume_MA_20'].dropna()
-                        if len(vol_ma) > 0:
-                            ax2.plot(vol_ma.index, vol_ma,
-                                    color='yellow',
-                                    linewidth=0.8,
-                                    alpha=0.7,
-                                    label='20-day Volume MA')
+                    # Plot A/D Line on secondary axis
+                    if 'AD_Line' in display_data.columns:
+                        ax2b = ax2.twinx()
+                        ad_data = display_data['AD_Line'].dropna()
+                        if len(ad_data) > 0:
+                            ax2b.plot(ad_data.index, ad_data,
+                                     color=self.config.CHART_COLORS['ad_line'],
+                                     linewidth=1.0,
+                                     label='A/D Line',
+                                     alpha=0.8)
+                            ax2b.set_ylabel('A/D Line', fontsize=10, color=self.config.CHART_COLORS['ad_line'])
+                            ax2b.tick_params(axis='y', labelcolor=self.config.CHART_COLORS['ad_line'])
+                            
+                            # Add legend for A/D line
+                            lines1, labels1 = ax2.get_legend_handles_labels()
+                            lines2, labels2 = ax2b.get_legend_handles_labels()
+                            ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8)
+                    
                 except Exception as e:
                     print(f"Volume chart error: {e}")
             
             ax2.set_ylabel('Volume', fontsize=10)
-            ax2.legend(loc='upper left', fontsize=8)
             ax2.grid(True, alpha=0.1)
             ax2.tick_params(axis='both', which='major', labelsize=8)
             
@@ -181,10 +165,10 @@ class ChartGenerator:
                                 linewidth=1.0,
                                 label='RSI')
                         
-                        # RSI levels with different styles
-                        ax3.axhline(y=70, color=self.config.CHART_COLORS['volume_down'], 
+                        # RSI levels
+                        ax3.axhline(y=70, color='red', 
                                   linestyle='--', alpha=0.6, linewidth=0.8, label='Overbought (70)')
-                        ax3.axhline(y=30, color=self.config.CHART_COLORS['volume_up'], 
+                        ax3.axhline(y=30, color='green', 
                                   linestyle='--', alpha=0.6, linewidth=0.8, label='Oversold (30)')
                         ax3.axhline(y=50, color='white', 
                                   linestyle=':', alpha=0.3, linewidth=0.5)
@@ -240,77 +224,8 @@ class ChartGenerator:
             
             ax4.tick_params(axis='both', which='major', labelsize=8)
             
-            # 5. A/D LINE CHART
-            ax5 = fig.add_subplot(gs[4], sharex=ax1)
-            
-            if 'AD_Line' in display_data.columns:
-                try:
-                    ad_data = display_data['AD_Line'].dropna()
-                    if len(ad_data) > 0:
-                        ax5.plot(ad_data.index, ad_data,
-                                color='cyan',
-                                linewidth=1.0,
-                                label='A/D Line')
-                        
-                        # Calculate and plot A/D Line EMA
-                        if len(ad_data) > 20:
-                            ad_ema = ad_data.ewm(span=20, adjust=False).mean()
-                            ax5.plot(ad_ema.index, ad_ema,
-                                    color='magenta',
-                                    linewidth=0.8,
-                                    alpha=0.7,
-                                    label='A/D EMA (20)')
-                        
-                        ax5.set_ylabel('A/D Line', fontsize=10)
-                        ax5.legend(loc='upper left', fontsize=8)
-                        ax5.grid(True, alpha=0.1)
-                except Exception as e:
-                    print(f"A/D Line chart error: {e}")
-            
-            ax5.tick_params(axis='both', which='major', labelsize=8)
-            
-            # 6. STOCHASTIC CHART
-            ax6 = fig.add_subplot(gs[5], sharex=ax1)
-            
-            if 'Stoch_%K' in display_data.columns and 'Stoch_%D' in display_data.columns:
-                try:
-                    stoch_k = display_data['Stoch_%K'].dropna()
-                    stoch_d = display_data['Stoch_%D'].dropna()
-                    
-                    if len(stoch_k) > 0 and len(stoch_d) > 0:
-                        ax6.plot(stoch_k.index, stoch_k,
-                                color='yellow',
-                                linewidth=1.0,
-                                label='%K')
-                        
-                        ax6.plot(stoch_d.index, stoch_d,
-                                color='orange',
-                                linewidth=1.0,
-                                label='%D')
-                        
-                        # Stochastic levels
-                        ax6.axhline(y=80, color='red', 
-                                  linestyle='--', alpha=0.5, linewidth=0.6, label='Overbought (80)')
-                        ax6.axhline(y=20, color='green', 
-                                  linestyle='--', alpha=0.5, linewidth=0.6, label='Oversold (20)')
-                        
-                        # Fill overbought/oversold areas
-                        ax6.fill_between(stoch_k.index, 80, 100, 
-                                        color='red', alpha=0.1)
-                        ax6.fill_between(stoch_k.index, 0, 20, 
-                                        color='green', alpha=0.1)
-                        
-                        ax6.set_ylim(0, 100)
-                        ax6.set_ylabel('Stochastic', fontsize=10)
-                        ax6.legend(loc='upper left', fontsize=8)
-                        ax6.grid(True, alpha=0.1)
-                except Exception as e:
-                    print(f"Stochastic chart error: {e}")
-            
-            ax6.tick_params(axis='both', which='major', labelsize=8)
-            
-            # Format dates based on period
-            self._format_date_axis(ax6, period, display_data)
+            # Format dates
+            self._format_date_axis(ax4, period, display_data)
             
             plt.tight_layout(pad=1.5)
             
@@ -320,8 +235,7 @@ class ChartGenerator:
                        facecolor=self.config.CHART_COLORS['background'],
                        bbox_inches='tight',
                        dpi=100,
-                       format='png',
-                       transparent=False)
+                       format='png')
             plt.close()
             
             print(f"✅ Chart generated: {temp_file.name}")
@@ -329,8 +243,6 @@ class ChartGenerator:
             
         except Exception as e:
             print(f"❌ Chart generation error: {e}")
-            import traceback
-            traceback.print_exc()
             raise
     
     def _get_days_for_period(self, period: str, max_days: int) -> int:
@@ -352,34 +264,27 @@ class ChartGenerator:
             if len(data) < 10:
                 return
             
-            # Determine date format based on period length
             date_range = (data.index[-1] - data.index[0]).days
             
-            if date_range < 90:  # Less than 3 months
+            if date_range < 90:
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
                 ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
-                ax.xaxis.set_minor_locator(mdates.DayLocator(interval=1))
-            elif date_range < 180:  # Less than 6 months
+            elif date_range < 180:
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
                 ax.xaxis.set_major_locator(mdates.MonthLocator())
-                ax.xaxis.set_minor_locator(mdates.WeekdayLocator(interval=1))
-            elif date_range < 365:  # Less than 1 year
+            elif date_range < 365:
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
                 ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-            elif date_range < 730:  # Less than 2 years
-                ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-                ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-            else:  # More than 2 years
+            else:
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
                 ax.xaxis.set_major_locator(mdates.YearLocator())
             
             plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=8)
             
-            # Adjust x-axis limits to show all data
+            # Adjust x-axis limits
             if len(data) > 0:
                 ax.set_xlim([data.index[0], data.index[-1]])
         except Exception as e:
             print(f"Date formatting error: {e}")
-            # Fallback to simple formatting
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
             plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=8)
