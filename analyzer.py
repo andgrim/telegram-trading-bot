@@ -1,6 +1,7 @@
 """
 Universal Trading Analyzer - Local Version
 Complete technical analysis with all indicators
+Optimized for Telegram and local usage
 """
 import yfinance as yf
 import pandas as pd
@@ -9,7 +10,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import warnings
 import time
 from datetime import datetime
-import talib as ta
+import re
 
 warnings.filterwarnings('ignore')
 
@@ -17,13 +18,15 @@ from config import CONFIG
 
 class SimpleCache:
     """Simple in-memory cache for all tickers"""
+    
     def __init__(self, ttl: int = 300, max_size: int = 100):
         self.ttl = ttl
         self.max_size = max_size
         self.cache = {}
         self.timestamps = {}
     
-    def get(self, key: str):
+    def get(self, key: str) -> Optional[Any]:
+        """Get value from cache if not expired"""
         if key in self.cache:
             if time.time() - self.timestamps[key] < self.ttl:
                 return self.cache[key]
@@ -32,13 +35,15 @@ class SimpleCache:
                 del self.timestamps[key]
         return None
     
-    def set(self, key: str, value):
+    def set(self, key: str, value: Any) -> None:
+        """Set value in cache with timestamp"""
         if len(self.cache) >= self.max_size:
             oldest_key = min(self.timestamps, key=self.timestamps.get)
             del self.cache[oldest_key]
             del self.timestamps[oldest_key]
         self.cache[key] = value
         self.timestamps[key] = time.time()
+
 
 class TradingAnalyzer:
     """Universal analyzer for ALL Yahoo Finance tickers with complete technical analysis"""
@@ -52,14 +57,14 @@ class TradingAnalyzer:
         
         print("✅ Universal Analyzer initialized (Complete Technical Analysis)")
         print("🌍 Supports all markets and tickers")
-        print("📊 Includes: Trend, Momentum, Volume, Volatility, Oscillators indicators")
+        print("📊 Includes: Trend, Momentum, Volume, Volatility, Oscillators")
     
     async def analyze_ticker(self, ticker_symbol: str, period: str = '1y') -> Dict:
         """Complete technical analysis method for any ticker"""
         try:
             print(f"🔍 Analyzing {ticker_symbol} ({period})")
             
-            # Map period
+            # Map period to Yahoo Finance format
             period_map = {
                 '3m': '3mo', '6m': '6mo', '1y': '1y',
                 '2y': '2y', '3y': '3y', '5y': '5y',
@@ -67,15 +72,15 @@ class TradingAnalyzer:
             }
             yf_period = period_map.get(period.lower(), '1y')
             
-            # Format ticker
+            # Format ticker for Yahoo Finance
             formatted_ticker = self._format_ticker_for_yfinance(ticker_symbol)
             print(f"Formatted: {ticker_symbol} -> {formatted_ticker}")
             
-            # Get exchange info
+            # Get exchange information
             exchange_info = self.config.get_exchange_info(formatted_ticker)
             print(f"Exchange: {exchange_info['exchange']}")
             
-            # Check cache
+            # Check cache first
             cache_key = f"{formatted_ticker}_{yf_period}"
             cached_data = self.cache.get(cache_key)
             
@@ -83,7 +88,7 @@ class TradingAnalyzer:
                 print("✅ Using cached data")
                 data = cached_data
             else:
-                # Simple fetch for local use
+                # Fetch fresh data from Yahoo Finance
                 data = self._fetch_data_simple(formatted_ticker, yf_period)
                 
                 if data is None or data.empty:
@@ -92,20 +97,20 @@ class TradingAnalyzer:
                         'error': f"No data found for {ticker_symbol}."
                     }
                 
-                # Cache it
+                # Cache the data
                 self.cache.set(cache_key, data)
                 print(f"✅ Data fetched: {len(data)} rows")
             
-            # Clean data before indicator calculation
+            # Clean and prepare data
             data = self._clean_data(data)
             
-            # Calculate ALL technical indicators
+            # Calculate complete set of technical indicators
             data = self._calculate_complete_indicators(data)
             
-            # Get ticker info
+            # Get ticker information
             info = await self._get_ticker_info(formatted_ticker, data, ticker_symbol)
             
-            # Generate all signals from ALL indicators
+            # Generate trading signals from all indicators
             signals = self._generate_all_signals(data)
             
             # Detect reversal patterns
@@ -126,7 +131,7 @@ class TradingAnalyzer:
             # Prepare compact summary for chart caption
             compact = self._create_compact_summary(ticker_symbol, data, info, signals, divergences)
             
-            # Debug: Print indicator counts
+            # Debug information
             indicator_count = len([col for col in data.columns if col not in ['Open', 'High', 'Low', 'Close', 'Volume']])
             bull_count = len([s for s in signals if s['direction'] == 'BULLISH'])
             bear_count = len([s for s in signals if s['direction'] == 'BEARISH'])
@@ -159,7 +164,7 @@ class TradingAnalyzer:
             }
     
     def _format_ticker_for_yfinance(self, ticker: str) -> str:
-        """Simple ticker formatting for yfinance"""
+        """Format ticker for Yahoo Finance API"""
         ticker = ticker.upper().strip().replace('$', '')
         return ticker
     
@@ -170,7 +175,7 @@ class TradingAnalyzer:
         
         df = data.copy()
         
-        # Ensure single-level columns
+        # Handle multi-index columns
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         
@@ -178,7 +183,7 @@ class TradingAnalyzer:
         if 'Adj Close' in df.columns:
             df = df.rename(columns={'Adj Close': 'Close'})
         
-        # Ensure we have required columns
+        # Ensure required columns exist
         required_columns = ['Close', 'High', 'Low', 'Open', 'Volume']
         for col in required_columns:
             if col not in df.columns:
@@ -187,21 +192,21 @@ class TradingAnalyzer:
                 elif col == 'Close':
                     df[col] = df.iloc[:, -1] if len(df.columns) > 0 else 0
         
-        # Ensure all data is numeric
+        # Convert all columns to numeric
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        # Drop rows with NaN in critical columns
+        # Remove rows with NaN in critical columns
         df = df.dropna(subset=['Close', 'High', 'Low', 'Open'])
         
-        # Ensure index is datetime
+        # Ensure datetime index
         if not isinstance(df.index, pd.DatetimeIndex):
             df.index = pd.to_datetime(df.index)
         
         return df
     
     def _fetch_data_simple(self, ticker: str, period: str) -> Optional[pd.DataFrame]:
-        """Simple data fetching for local use"""
+        """Fetch data from Yahoo Finance with simple retry logic"""
         try:
             data = yf.download(
                 tickers=ticker,
@@ -214,7 +219,7 @@ class TradingAnalyzer:
                 prepost=False
             )
             
-            # Small delay to be polite
+            # Small delay to respect Yahoo's rate limits
             time.sleep(0.2)
             
             return data if not data.empty else None
@@ -236,7 +241,7 @@ class TradingAnalyzer:
                 return None
     
     async def _get_ticker_info(self, ticker: str, data: pd.DataFrame, original_ticker: str) -> Dict:
-        """Get ticker information"""
+        """Get ticker information from Yahoo Finance"""
         try:
             ticker_obj = yf.Ticker(ticker)
             info = ticker_obj.info
@@ -253,6 +258,7 @@ class TradingAnalyzer:
                     'country': 'USA',
                 }
             
+            # Add price data from our analysis
             if len(data) > 0:
                 latest = data.iloc[-1]
                 info['last_price'] = float(latest['Close'])
@@ -261,6 +267,7 @@ class TradingAnalyzer:
                 info['last_high'] = float(latest.get('High', latest['Close']))
                 info['last_low'] = float(latest.get('Low', latest['Close']))
             
+            # Ensure currency is set
             if 'currency' not in info:
                 info['currency'] = 'USD'
             
@@ -278,17 +285,16 @@ class TradingAnalyzer:
             }
     
     def _calculate_complete_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calculate COMPLETE set of technical indicators"""
+        """Calculate complete set of technical indicators"""
         df = data.copy()
         
         if len(df) < 20:
             return df
         
         try:
-            # Ensure we have required price data
+            # Prepare price data
             for col in ['Close', 'High', 'Low', 'Open', 'Volume']:
                 if col in df.columns:
-                    # Convert to numpy array and flatten if needed
                     values = df[col].values
                     if values.ndim > 1:
                         values = values.flatten()
@@ -298,23 +304,19 @@ class TradingAnalyzer:
             print(f"📊 Data shape: {df.shape}")
             print(f"📊 Calculating complete technical indicators...")
             
-            # ===== TREND INDICATORS =====
+            # === TREND INDICATORS ===
             print("📈 Calculating trend indicators...")
             
-            # Moving Averages (Simple and Exponential)
+            # Moving Averages
             for period in [5, 10, 20, 50, 100, 200]:
                 if len(df) >= period:
                     df[f'SMA_{period}'] = df['Close'].rolling(window=period, min_periods=1).mean()
                     df[f'EMA_{period}'] = df['Close'].ewm(span=period, adjust=False).mean()
+                else:
+                    df[f'SMA_{period}'] = df['Close'].expanding().mean()
+                    df[f'EMA_{period}'] = df['Close'].ewm(span=min(len(df), period), adjust=False).mean()
             
-            # Parabolic SAR
-            if len(df) >= 10:
-                try:
-                    df['SAR'] = ta.SAR(df['High'].values, df['Low'].values, acceleration=0.02, maximum=0.2)
-                except:
-                    df['SAR'] = df['Close']
-            
-            # ===== MOMENTUM INDICATORS =====
+            # === MOMENTUM INDICATORS ===
             print("📊 Calculating momentum indicators...")
             
             # MACD
@@ -351,7 +353,9 @@ class TradingAnalyzer:
             if len(df) >= 20:
                 tp = (df['High'] + df['Low'] + df['Close']) / 3
                 sma = tp.rolling(window=20, min_periods=1).mean()
-                mad = tp.rolling(window=20, min_periods=1).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+                mad = tp.rolling(window=20, min_periods=1).apply(
+                    lambda x: np.abs(x - x.mean()).mean(), raw=True
+                )
                 df['CCI'] = (tp - sma) / (0.015 * mad)
             
             # ROC (Rate of Change)
@@ -359,7 +363,7 @@ class TradingAnalyzer:
                 if len(df) >= period:
                     df[f'ROC_{period}'] = ((df['Close'] - df['Close'].shift(period)) / df['Close'].shift(period)) * 100
             
-            # ===== VOLUME INDICATORS =====
+            # === VOLUME INDICATORS ===
             print("📈 Calculating volume indicators...")
             
             if 'Volume' in df.columns:
@@ -398,7 +402,7 @@ class TradingAnalyzer:
                     df['MFI'] = 100 - (100 / (1 + money_ratio))
                     df['MFI'] = df['MFI'].fillna(50)
             
-            # ===== VOLATILITY INDICATORS =====
+            # === VOLATILITY INDICATORS ===
             print("📉 Calculating volatility indicators...")
             
             # Bollinger Bands
@@ -427,7 +431,7 @@ class TradingAnalyzer:
                 df['ATR'] = true_range.rolling(window=14, min_periods=1).mean()
                 df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
             
-            # ===== OSCILLATORS =====
+            # === OSCILLATORS ===
             print("📊 Calculating oscillators...")
             
             # Awesome Oscillator
@@ -441,28 +445,27 @@ class TradingAnalyzer:
                 df['Chaikin_10EMA'] = df['AD_Line'].ewm(span=10, adjust=False).mean()
                 df['Chaikin_Osc'] = df['Chaikin_3EMA'] - df['Chaikin_10EMA']
             
-            # ===== SUPPORT/RESISTANCE =====
+            # === SUPPORT/RESISTANCE ===
             print("📈 Calculating support/resistance levels...")
             
-            # Recent high/low
             if len(df) >= 20:
                 df['Resistance_20'] = df['High'].rolling(window=20, min_periods=1).max()
                 df['Support_20'] = df['Low'].rolling(window=20, min_periods=1).min()
             
-            # ===== PERFORMANCE METRICS =====
+            # === PERFORMANCE METRICS ===
             print("📊 Calculating performance metrics...")
             
             df['Daily_Return'] = df['Close'].pct_change()
             df['Cumulative_Return'] = (1 + df['Daily_Return']).cumprod() - 1
             
-            # Volatility (annualized)
+            # Annualized volatility
             df['Volatility_20d'] = df['Daily_Return'].rolling(window=20, min_periods=1).std() * np.sqrt(252)
             df['Volatility_60d'] = df['Daily_Return'].rolling(window=60, min_periods=1).std() * np.sqrt(252)
             
             # Fill NaN values
             df = df.fillna(method='ffill').fillna(method='bfill')
             
-            # Display some key indicators
+            # Display key indicators
             if len(df) > 0:
                 last_row = df.iloc[-1]
                 print(f"\n📊 KEY INDICATORS (Latest):")
@@ -486,7 +489,7 @@ class TradingAnalyzer:
         return df
     
     def _generate_all_signals(self, data: pd.DataFrame) -> List[Dict]:
-        """Generate signals from ALL technical indicators"""
+        """Generate trading signals from all technical indicators"""
         signals = []
         
         if len(data) < 20:
@@ -494,11 +497,11 @@ class TradingAnalyzer:
             return signals
         
         try:
-            # Get scalar values from last row
+            # Get current and previous index
             last_idx = len(data) - 1
             prev_idx = last_idx - 1 if last_idx > 0 else last_idx
             
-            # Helper function to safely get scalar values
+            # Helper function to get scalar values safely
             def get_scalar(column, idx):
                 try:
                     val = data[column].iloc[idx]
@@ -508,10 +511,10 @@ class TradingAnalyzer:
                 except:
                     return None
             
-            # Get current values
+            # Current price
             close = get_scalar('Close', last_idx)
             
-            # ===== TREND SIGNALS =====
+            # === TREND SIGNALS ===
             print("📈 Generating trend signals...")
             
             # Moving Average Crossovers
@@ -545,7 +548,7 @@ class TradingAnalyzer:
                         else:
                             signals.append({'type': f'BELOW_{period}EMA', 'strength': 'MODERATE', 'direction': 'BEARISH'})
             
-            # ===== MOMENTUM SIGNALS =====
+            # === MOMENTUM SIGNALS ===
             print("📊 Generating momentum signals...")
             
             # RSI Signals
@@ -602,7 +605,7 @@ class TradingAnalyzer:
                 elif cci > 100:
                     signals.append({'type': 'CCI_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
             
-            # ===== VOLUME SIGNALS =====
+            # === VOLUME SIGNALS ===
             print("📈 Generating volume signals...")
             
             # Volume Ratio
@@ -633,7 +636,7 @@ class TradingAnalyzer:
                 elif mfi > 80:
                     signals.append({'type': 'MFI_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
             
-            # ===== VOLATILITY SIGNALS =====
+            # === VOLATILITY SIGNALS ===
             print("📉 Generating volatility signals...")
             
             # Bollinger Bands Signals
@@ -661,7 +664,7 @@ class TradingAnalyzer:
                 elif atr_pct < 1:
                     signals.append({'type': 'LOW_VOLATILITY', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
             
-            # ===== OSCILLATOR SIGNALS =====
+            # === OSCILLATOR SIGNALS ===
             print("📊 Generating oscillator signals...")
             
             # Awesome Oscillator
@@ -715,7 +718,7 @@ class TradingAnalyzer:
                 except:
                     return None
             
-            # ===== BULLISH REVERSAL INDICATORS =====
+            # === BULLISH REVERSAL INDICATORS ===
             bullish_count = 0
             bullish_details = []
             
@@ -763,7 +766,7 @@ class TradingAnalyzer:
                 patterns['signals'] = bullish_details
                 patterns['details']['bullish_count'] = bullish_count
             
-            # ===== BEARISH REVERSAL INDICATORS =====
+            # === BEARISH REVERSAL INDICATORS ===
             bearish_count = 0
             bearish_details = []
             
@@ -830,7 +833,7 @@ class TradingAnalyzer:
         try:
             recent = data.iloc[-lookback:].copy()
             
-            # Get arrays
+            # Get price and indicator arrays
             price = recent['Close'].values
             rsi = recent['RSI'].values if 'RSI' in recent.columns else None
             macd = recent['MACD'].values if 'MACD' in recent.columns else None
@@ -842,12 +845,6 @@ class TradingAnalyzer:
             if len(price) >= slice_len and rsi is not None and len(rsi) >= slice_len:
                 price_slice = price[-slice_len:]
                 rsi_slice = rsi[-slice_len:]
-                
-                # Find minima and maxima
-                price_min_idx = np.argmin(price_slice)
-                price_max_idx = np.argmax(price_slice)
-                rsi_min_idx = np.argmin(rsi_slice)
-                rsi_max_idx = np.argmax(rsi_slice)
                 
                 # Bullish divergence: price makes lower low, RSI makes higher low
                 if price_slice[-1] < price_slice[-10] and rsi_slice[-1] > rsi_slice[-10]:
@@ -914,7 +911,7 @@ class TradingAnalyzer:
                     'worst_day': 0,
                 }
             
-            # Calculate statistics
+            # Calculate win rate
             win_count = (returns > 0).sum()
             total_trades = len(returns)
             
@@ -947,6 +944,24 @@ class TradingAnalyzer:
         except:
             return 0.0
     
+    def _clean_text_for_telegram(self, text: str) -> str:
+        """Clean text to avoid Telegram HTML parsing errors"""
+        if not text:
+            return text
+        
+        # Remove HTML tags
+        text = re.sub(r'<[^>]+>', '', text)
+        
+        # Replace problematic characters
+        text = text.replace('<', '(').replace('>', ')')
+        text = text.replace('&', 'and')
+        
+        # Clean up any remaining HTML entities
+        text = text.replace('&lt;', '<').replace('&gt;', '>')
+        text = text.replace('&amp;', '&').replace('&quot;', '"').replace('&apos;', "'")
+        
+        return text
+    
     def _create_comprehensive_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
                                      signals: List[Dict], reversal_patterns: Dict,
                                      divergences: Dict, stats: Dict, exchange_info: Dict) -> str:
@@ -967,7 +982,7 @@ class TradingAnalyzer:
             
             latest_volume = float(data['Volume'].iloc[-1]) if 'Volume' in data.columns else 0
             
-            # Count signals
+            # Count signals by direction
             bull_signals = [s for s in signals if s['direction'] == 'BULLISH']
             bear_signals = [s for s in signals if s['direction'] == 'BEARISH']
             neutral_signals = [s for s in signals if s['direction'] == 'NEUTRAL']
@@ -975,7 +990,7 @@ class TradingAnalyzer:
             currency = info.get('currency', 'USD')
             currency_symbol = '$' if currency == 'USD' else '€' if currency == 'EUR' else '£' if currency == 'GBP' else f'{currency} '
             
-            # Helper function to safely get indicator values
+            # Helper function to get indicator values safely
             def get_indicator(col):
                 try:
                     val = data[col].iloc[-1]
@@ -985,7 +1000,7 @@ class TradingAnalyzer:
                 except:
                     return None
             
-            # ===== CREATE COMPREHENSIVE SUMMARY =====
+            # === CREATE SUMMARY ===
             summary = f"""
 📊 COMPLETE TECHNICAL ANALYSIS: {ticker.upper()}
 
@@ -1017,14 +1032,6 @@ class TradingAnalyzer:
                         summary += f"• 🟢 Above {period}-day SMA: {currency_symbol}{sma:.2f}\n"
                     else:
                         summary += f"• 🔴 Below {period}-day SMA: {currency_symbol}{sma:.2f}\n"
-            
-            # Parabolic SAR
-            sar = get_indicator('SAR')
-            if sar is not None:
-                if latest_close > sar:
-                    summary += f"• 🟢 Above SAR: {currency_symbol}{sar:.2f}\n"
-                else:
-                    summary += f"• 🔴 Below SAR: {currency_symbol}{sar:.2f}\n"
             
             summary += f"""
 📊 MOMENTUM INDICATORS
@@ -1220,7 +1227,8 @@ class TradingAnalyzer:
             summary += f"\n🎯 OVERALL RECOMMENDATION: {recommendation}"
             summary += f"\n\n⏰ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             
-            return summary
+            # Clean text for Telegram
+            return self._clean_text_for_telegram(summary)
             
         except Exception as e:
             print(f"Summary creation error: {e}")
@@ -1305,8 +1313,10 @@ class TradingAnalyzer:
                 else:
                     summary += f"📈 RSI: {rsi_value:.1f} ⚪\n"
             
-            if macd_status:
-                summary += f"{macd_status} MACD: {macd_value:.4f}\n" if macd_value else f"{macd_status} MACD\n"
+            if macd_status and macd_value is not None:
+                summary += f"{macd_status} MACD: {macd_value:.4f}\n"
+            elif macd_status:
+                summary += f"{macd_status} MACD\n"
             
             if bb_percent is not None:
                 if bb_percent < 0.2:
@@ -1328,14 +1338,15 @@ class TradingAnalyzer:
             summary += f"📶 🟢{bull_signals} | 🔴{bear_signals}\n"
             summary += f"🎯 {sentiment}"
             
-            return summary
+            # Clean text for Telegram
+            return self._clean_text_for_telegram(summary)
             
         except Exception as e:
             print(f"Compact summary error: {e}")
             return f"📊 {ticker.upper()} - Complete Technical Analysis"
     
     def _format_number(self, num: float) -> str:
-        """Format large numbers"""
+        """Format large numbers for display"""
         try:
             num = float(num)
             if num >= 1_000_000_000:

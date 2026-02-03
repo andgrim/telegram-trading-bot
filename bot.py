@@ -2,10 +2,12 @@
 Universal Trading Bot for Telegram - Local Polling Version
 Simple version without webhook for local use
 Added period buttons for analysis
+FIXED: Telegram HTML parsing error
 """
 import logging
 import os
 import asyncio
+import html
 from typing import Dict, Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -104,6 +106,33 @@ class UniversalTradingBot:
         )
         
         logger.info("All handlers setup completed")
+    
+    def _clean_telegram_text(self, text: str) -> str:
+        """Clean text for Telegram to avoid HTML parsing errors"""
+        if not text:
+            return text
+        
+        # Replace problematic characters with safe equivalents
+        replacements = {
+            '<': '&lt;',
+            '>': '&gt;',
+            '&': '&amp;',
+            '"': '&quot;',
+            "'": '&apos;'
+        }
+        
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        
+        # Remove any remaining HTML tags (simple approach)
+        import re
+        text = re.sub(r'<[^>]+>', '', text)
+        
+        # Ensure text is not too long for Telegram
+        if len(text) > 4096:
+            text = text[:4000] + "\n... [truncated]"
+        
+        return text
     
     def _get_period_keyboard(self, ticker: str) -> InlineKeyboardMarkup:
         """Create keyboard with period buttons for a ticker"""
@@ -236,7 +265,7 @@ class UniversalTradingBot:
     
     async def _perform_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE, 
                               ticker: str, period: str):
-        """Perform analysis"""
+        """Perform analysis - FIXED version with proper text cleaning"""
         chat_id = update.effective_chat.id
         
         # Send typing indicator
@@ -288,60 +317,151 @@ class UniversalTradingBot:
             # Create keyboard with period options
             reply_markup = self._get_analysis_keyboard(ticker, period)
             
-            # Send chart if available
-            if chart_path:
-                try:
-                    with open(chart_path, 'rb') as f:
-                        caption = analysis['compact_summary']
-                        if len(caption) > 1024:
-                            caption = caption[:1020] + "..."
+            # Clean the text for Telegram
+            compact_summary = analysis.get('compact_summary', '')
+            full_summary = analysis.get('summary', '')
+            
+            # Clean text to avoid HTML parsing errors
+            compact_summary_clean = self._clean_telegram_text(compact_summary)
+            full_summary_clean = self._clean_telegram_text(full_summary)
+            
+            # Truncate if necessary
+            if len(compact_summary_clean) > 1024:
+                compact_summary_clean = compact_summary_clean[:1000] + "..."
+            
+            if len(full_summary_clean) > 4096:
+                # Split long message into multiple parts
+                full_summary_parts = []
+                current_part = ""
+                lines = full_summary_clean.split('\n')
+                
+                for line in lines:
+                    if len(current_part) + len(line) + 1 < 4000:
+                        current_part += line + '\n'
+                    else:
+                        full_summary_parts.append(current_part)
+                        current_part = line + '\n'
+                
+                if current_part:
+                    full_summary_parts.append(current_part)
+                
+                # Send chart if available
+                if chart_path:
+                    try:
+                        with open(chart_path, 'rb') as f:
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=f,
+                                caption=compact_summary_clean,
+                                reply_markup=reply_markup
+                            )
                         
-                        await context.bot.send_photo(
+                        # Send summary in parts
+                        for i, part in enumerate(full_summary_parts):
+                            if i == 0:
+                                await context.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=part,
+                                    parse_mode=None
+                                )
+                            else:
+                                await context.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=part,
+                                    parse_mode=None
+                                )
+                        
+                    except Exception as e:
+                        logger.error(f"Photo error: {e}")
+                        # Send analysis without chart
+                        for i, part in enumerate(full_summary_parts):
+                            if i == 0:
+                                await context.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=part,
+                                    reply_markup=reply_markup,
+                                    parse_mode=None
+                                )
+                            else:
+                                await context.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=part,
+                                    parse_mode=None
+                                )
+                    finally:
+                        # Cleanup
+                        try:
+                            os.remove(chart_path)
+                        except:
+                            pass
+                else:
+                    # Send analysis without chart
+                    for i, part in enumerate(full_summary_parts):
+                        if i == 0:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=part,
+                                reply_markup=reply_markup,
+                                parse_mode=None
+                            )
+                        else:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=part,
+                                parse_mode=None
+                            )
+            else:
+                # Message is short enough for single message
+                # Send chart if available
+                if chart_path:
+                    try:
+                        with open(chart_path, 'rb') as f:
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=f,
+                                caption=compact_summary_clean,
+                                reply_markup=reply_markup
+                            )
+                        
+                        # Send full analysis
+                        await context.bot.send_message(
                             chat_id=chat_id,
-                            photo=f,
-                            caption=caption,
-                            reply_markup=reply_markup,
-                            parse_mode=ParseMode.HTML
+                            text=full_summary_clean,
+                            parse_mode=None
                         )
-                    
-                    # Send full analysis
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=analysis['summary'],
-                        parse_mode=ParseMode.HTML
-                    )
-                    
-                except Exception as e:
-                    logger.error(f"Photo error: {e}")
+                        
+                    except Exception as e:
+                        logger.error(f"Photo error: {e}")
+                        # Send analysis without chart
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=full_summary_clean,
+                            reply_markup=reply_markup,
+                            parse_mode=None
+                        )
+                    finally:
+                        # Cleanup
+                        try:
+                            os.remove(chart_path)
+                        except:
+                            pass
+                else:
                     # Send analysis without chart
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text=analysis['summary'],
+                        text=full_summary_clean,
                         reply_markup=reply_markup,
-                        parse_mode=ParseMode.HTML
+                        parse_mode=None
                     )
-                finally:
-                    # Cleanup
-                    try:
-                        os.remove(chart_path)
-                    except:
-                        pass
-            else:
-                # Send analysis without chart
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=analysis['summary'],
-                    reply_markup=reply_markup,
-                    parse_mode=ParseMode.HTML
-                )
             
         except Exception as e:
             logger.error(f"Analysis failed: {e}")
+            error_msg = f"❌ Analysis failed for {ticker}\n\n"
+            error_msg += f"Error: {str(e)[:100]}"
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"❌ Analysis failed for {ticker}\n\n"
-                     f"Error: {str(e)[:100]}",
-                parse_mode=ParseMode.HTML
+                text=error_msg,
+                parse_mode=None
             )
         finally:
             # Delete status
