@@ -1,6 +1,6 @@
 """
 Universal Trading Analyzer - Local Version
-Simple yfinance data fetching without rate limiting
+Complete technical analysis with all indicators
 """
 import yfinance as yf
 import pandas as pd
@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import warnings
 import time
 from datetime import datetime
+import talib as ta
 
 warnings.filterwarnings('ignore')
 
@@ -40,7 +41,7 @@ class SimpleCache:
         self.timestamps[key] = time.time()
 
 class TradingAnalyzer:
-    """Universal analyzer for ALL Yahoo Finance tickers - Local version"""
+    """Universal analyzer for ALL Yahoo Finance tickers with complete technical analysis"""
     
     def __init__(self):
         self.config = CONFIG
@@ -49,11 +50,12 @@ class TradingAnalyzer:
             max_size=self.config.MAX_CACHE_SIZE
         )
         
-        print("✅ Universal Analyzer initialized (Local Version)")
+        print("✅ Universal Analyzer initialized (Complete Technical Analysis)")
         print("🌍 Supports all markets and tickers")
+        print("📊 Includes: Trend, Momentum, Volume, Volatility, Oscillators indicators")
     
     async def analyze_ticker(self, ticker_symbol: str, period: str = '1y') -> Dict:
-        """Universal analysis method for any ticker"""
+        """Complete technical analysis method for any ticker"""
         try:
             print(f"🔍 Analyzing {ticker_symbol} ({period})")
             
@@ -97,13 +99,13 @@ class TradingAnalyzer:
             # Clean data before indicator calculation
             data = self._clean_data(data)
             
-            # Calculate technical indicators
+            # Calculate ALL technical indicators
             data = self._calculate_complete_indicators(data)
             
             # Get ticker info
             info = await self._get_ticker_info(formatted_ticker, data, ticker_symbol)
             
-            # Generate all signals
+            # Generate all signals from ALL indicators
             signals = self._generate_all_signals(data)
             
             # Detect reversal patterns
@@ -115,17 +117,22 @@ class TradingAnalyzer:
             # Calculate performance statistics
             stats = self._calculate_statistics(data)
             
-            # Prepare summary
+            # Prepare comprehensive summary
             summary = self._create_comprehensive_summary(
                 ticker_symbol, data, info, signals, 
                 reversal_patterns, divergences, stats, exchange_info
             )
+            
+            # Prepare compact summary for chart caption
             compact = self._create_compact_summary(ticker_symbol, data, info, signals, divergences)
             
-            # Debug: Print signal counts
+            # Debug: Print indicator counts
+            indicator_count = len([col for col in data.columns if col not in ['Open', 'High', 'Low', 'Close', 'Volume']])
             bull_count = len([s for s in signals if s['direction'] == 'BULLISH'])
             bear_count = len([s for s in signals if s['direction'] == 'BEARISH'])
+            
             print(f"✅ Analysis complete for {ticker_symbol}")
+            print(f"📊 Indicators calculated: {indicator_count}")
             print(f"📊 Signals: {bull_count} Bullish, {bear_count} Bearish, {len(signals)} Total")
             
             return {
@@ -152,9 +159,9 @@ class TradingAnalyzer:
             }
     
     def _format_ticker_for_yfinance(self, ticker: str) -> str:
-        """Simple ticker formatting for yfinance - local version"""
+        """Simple ticker formatting for yfinance"""
         ticker = ticker.upper().strip().replace('$', '')
-        return ticker  # Keep original, yfinance handles most
+        return ticker
     
     def _clean_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """Clean and prepare data for analysis"""
@@ -221,7 +228,7 @@ class TradingAnalyzer:
                 data = ticker_obj.history(
                     period=period,
                     interval="1d",
-                    timeout=self.config.YAHOO_TIMEOVerdana
+                    timeout=self.config.YAHOO_TIMEOUT
                 )
                 return data if not data.empty else None
             except Exception as e2:
@@ -229,7 +236,7 @@ class TradingAnalyzer:
                 return None
     
     async def _get_ticker_info(self, ticker: str, data: pd.DataFrame, original_ticker: str) -> Dict:
-        """Get ticker information - simplified"""
+        """Get ticker information"""
         try:
             ticker_obj = yf.Ticker(ticker)
             info = ticker_obj.info
@@ -271,40 +278,44 @@ class TradingAnalyzer:
             }
     
     def _calculate_complete_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calculate ALL technical indicators safely - Keep all indicators"""
+        """Calculate COMPLETE set of technical indicators"""
         df = data.copy()
         
-        if len(df) < 10:
+        if len(df) < 20:
             return df
         
         try:
-            # Ensure all columns are 1D Series
+            # Ensure we have required price data
             for col in ['Close', 'High', 'Low', 'Open', 'Volume']:
                 if col in df.columns:
+                    # Convert to numpy array and flatten if needed
                     values = df[col].values
                     if values.ndim > 1:
                         values = values.flatten()
                     df[col] = pd.Series(values, index=df.index)
-            
-            # Ensure numeric
-            for col in ['Close', 'High', 'Low', 'Open', 'Volume']:
-                if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
             
             print(f"📊 Data shape: {df.shape}")
+            print(f"📊 Calculating complete technical indicators...")
             
-            # Price transformations
-            df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
+            # ===== TREND INDICATORS =====
+            print("📈 Calculating trend indicators...")
             
-            # Moving Averages - Calculate properly for entire dataset
-            for period in [20, 50, 200]:
+            # Moving Averages (Simple and Exponential)
+            for period in [5, 10, 20, 50, 100, 200]:
                 if len(df) >= period:
                     df[f'SMA_{period}'] = df['Close'].rolling(window=period, min_periods=1).mean()
                     df[f'EMA_{period}'] = df['Close'].ewm(span=period, adjust=False).mean()
-                else:
-                    # If not enough data, use expanding mean
-                    df[f'SMA_{period}'] = df['Close'].expanding().mean()
-                    df[f'EMA_{period}'] = df['Close'].ewm(span=min(len(df), period), adjust=False).mean()
+            
+            # Parabolic SAR
+            if len(df) >= 10:
+                try:
+                    df['SAR'] = ta.SAR(df['High'].values, df['Low'].values, acceleration=0.02, maximum=0.2)
+                except:
+                    df['SAR'] = df['Close']
+            
+            # ===== MOMENTUM INDICATORS =====
+            print("📊 Calculating momentum indicators...")
             
             # MACD
             if len(df) >= 26:
@@ -313,7 +324,6 @@ class TradingAnalyzer:
                 df['MACD'] = exp1 - exp2
                 df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
                 df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-                df['MACD_Hist_Color'] = np.where(df['MACD_Hist'] >= 0, 'green', 'red')
             
             # RSI
             if len(df) >= 14:
@@ -324,9 +334,36 @@ class TradingAnalyzer:
                 df['RSI'] = 100 - (100 / (1 + rs))
                 df['RSI'] = df['RSI'].fillna(50)
             
-            # Volume indicators
+            # Stochastic
+            if len(df) >= 14:
+                low_14 = df['Low'].rolling(window=14, min_periods=1).min()
+                high_14 = df['High'].rolling(window=14, min_periods=1).max()
+                df['Stoch_%K'] = 100 * ((df['Close'] - low_14) / (high_14 - low_14))
+                df['Stoch_%D'] = df['Stoch_%K'].rolling(window=3, min_periods=1).mean()
+            
+            # Williams %R
+            if len(df) >= 14:
+                highest_high = df['High'].rolling(window=14, min_periods=1).max()
+                lowest_low = df['Low'].rolling(window=14, min_periods=1).min()
+                df['Williams_%R'] = -100 * ((highest_high - df['Close']) / (highest_high - lowest_low))
+            
+            # CCI (Commodity Channel Index)
+            if len(df) >= 20:
+                tp = (df['High'] + df['Low'] + df['Close']) / 3
+                sma = tp.rolling(window=20, min_periods=1).mean()
+                mad = tp.rolling(window=20, min_periods=1).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+                df['CCI'] = (tp - sma) / (0.015 * mad)
+            
+            # ROC (Rate of Change)
+            for period in [12, 14, 26]:
+                if len(df) >= period:
+                    df[f'ROC_{period}'] = ((df['Close'] - df['Close'].shift(period)) / df['Close'].shift(period)) * 100
+            
+            # ===== VOLUME INDICATORS =====
+            print("📈 Calculating volume indicators...")
+            
             if 'Volume' in df.columns:
-                # OBV
+                # OBV (On Balance Volume)
                 obv = np.zeros(len(df))
                 for i in range(1, len(df)):
                     if df['Close'].iloc[i] > df['Close'].iloc[i-1]:
@@ -337,51 +374,122 @@ class TradingAnalyzer:
                         obv[i] = obv[i-1]
                 df['OBV'] = obv
                 
-                # A/D Line
+                # A/D Line (Accumulation/Distribution)
                 clv = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
                 clv = clv.fillna(0)
                 df['AD_Line'] = (clv * df['Volume']).cumsum()
                 
+                # Volume Moving Average
                 df['Volume_MA_20'] = df['Volume'].rolling(window=20, min_periods=1).mean()
                 df['Volume_Ratio'] = df['Volume'] / df['Volume_MA_20'].replace(0, 1)
-                df['Volume_Ratio'] = df['Volume_Ratio'].fillna(1)
+                
+                # Money Flow Index
+                if len(df) >= 14:
+                    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+                    money_flow = typical_price * df['Volume']
+                    
+                    positive_flow = np.where(typical_price > typical_price.shift(1), money_flow, 0)
+                    negative_flow = np.where(typical_price < typical_price.shift(1), money_flow, 0)
+                    
+                    positive_mf = pd.Series(positive_flow, index=df.index).rolling(window=14, min_periods=1).sum()
+                    negative_mf = pd.Series(negative_flow, index=df.index).rolling(window=14, min_periods=1).sum()
+                    
+                    money_ratio = positive_mf / negative_mf.replace(0, 1)
+                    df['MFI'] = 100 - (100 / (1 + money_ratio))
+                    df['MFI'] = df['MFI'].fillna(50)
+            
+            # ===== VOLATILITY INDICATORS =====
+            print("📉 Calculating volatility indicators...")
             
             # Bollinger Bands
             if len(df) >= 20:
-                df['BB_Middle'] = df['Close'].rolling(20, min_periods=1).mean()
-                bb_std = df['Close'].rolling(20, min_periods=1).std()
+                df['BB_Middle'] = df['Close'].rolling(window=20, min_periods=1).mean()
+                bb_std = df['Close'].rolling(window=20, min_periods=1).std()
                 df['BB_Upper'] = df['BB_Middle'] + (bb_std * 2)
                 df['BB_Lower'] = df['BB_Middle'] - (bb_std * 2)
+                df['BB_Width'] = ((df['BB_Upper'] - df['BB_Lower']) / df['BB_Middle']) * 100
                 df['BB_%B'] = (df['Close'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'])
                 df['BB_%B'] = df['BB_%B'].fillna(0.5)
             
-            # Performance metrics
-            df['Daily_Return'] = df['Close'].pct_change().fillna(0)
+            # ATR (Average True Range)
+            if len(df) >= 14:
+                high_low = df['High'] - df['Low']
+                high_close = np.abs(df['High'] - df['Close'].shift())
+                low_close = np.abs(df['Low'] - df['Close'].shift())
+                
+                ranges = pd.DataFrame({
+                    'high_low': high_low,
+                    'high_close': high_close,
+                    'low_close': low_close
+                })
+                
+                true_range = ranges.max(axis=1)
+                df['ATR'] = true_range.rolling(window=14, min_periods=1).mean()
+                df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
+            
+            # ===== OSCILLATORS =====
+            print("📊 Calculating oscillators...")
+            
+            # Awesome Oscillator
+            if len(df) >= 34:
+                median_price = (df['High'] + df['Low']) / 2
+                df['AO'] = median_price.rolling(window=5, min_periods=1).mean() - median_price.rolling(window=34, min_periods=1).mean()
+            
+            # Chaikin Oscillator
+            if 'AD_Line' in df.columns and len(df) >= 10:
+                df['Chaikin_3EMA'] = df['AD_Line'].ewm(span=3, adjust=False).mean()
+                df['Chaikin_10EMA'] = df['AD_Line'].ewm(span=10, adjust=False).mean()
+                df['Chaikin_Osc'] = df['Chaikin_3EMA'] - df['Chaikin_10EMA']
+            
+            # ===== SUPPORT/RESISTANCE =====
+            print("📈 Calculating support/resistance levels...")
+            
+            # Recent high/low
+            if len(df) >= 20:
+                df['Resistance_20'] = df['High'].rolling(window=20, min_periods=1).max()
+                df['Support_20'] = df['Low'].rolling(window=20, min_periods=1).min()
+            
+            # ===== PERFORMANCE METRICS =====
+            print("📊 Calculating performance metrics...")
+            
+            df['Daily_Return'] = df['Close'].pct_change()
+            df['Cumulative_Return'] = (1 + df['Daily_Return']).cumprod() - 1
+            
+            # Volatility (annualized)
+            df['Volatility_20d'] = df['Daily_Return'].rolling(window=20, min_periods=1).std() * np.sqrt(252)
+            df['Volatility_60d'] = df['Daily_Return'].rolling(window=60, min_periods=1).std() * np.sqrt(252)
             
             # Fill NaN values
             df = df.fillna(method='ffill').fillna(method='bfill')
             
+            # Display some key indicators
             if len(df) > 0:
                 last_row = df.iloc[-1]
-                print(f"📊 Last row indicators:")
-                print(f"  Close: {last_row.get('Close', 0):.2f}")
+                print(f"\n📊 KEY INDICATORS (Latest):")
+                print(f"  Price: ${last_row.get('Close', 0):.2f}")
                 print(f"  RSI: {last_row.get('RSI', 0):.1f}")
                 print(f"  MACD: {last_row.get('MACD', 0):.4f}")
-                print(f"  Volume Ratio: {last_row.get('Volume_Ratio', 0):.2f}")
+                print(f"  BB %B: {last_row.get('BB_%B', 0):.2f}")
+                print(f"  Volume Ratio: {last_row.get('Volume_Ratio', 0):.1f}x")
+                print(f"  A/D Line: {last_row.get('AD_Line', 0):.0f}")
+                print(f"  Stochastic %K: {last_row.get('Stoch_%K', 0):.1f}")
+                print(f"  CCI: {last_row.get('CCI', 0):.1f}")
             
-            indicator_count = len([col for col in df.columns if 'Unnamed' not in str(col)])
-            print(f"✅ Calculated {indicator_count} indicators")
+            indicator_count = len([col for col in df.columns if col not in ['Open', 'High', 'Low', 'Close', 'Volume']])
+            print(f"\n✅ Calculated {indicator_count} technical indicators")
             
         except Exception as e:
             print(f"⚠️ Indicator calculation error: {e}")
+            import traceback
+            traceback.print_exc()
         
         return df
     
     def _generate_all_signals(self, data: pd.DataFrame) -> List[Dict]:
-        """Generate signals from all indicators"""
+        """Generate signals from ALL technical indicators"""
         signals = []
         
-        if len(data) < 10:
+        if len(data) < 20:
             print("⚠️ Not enough data for signals")
             return signals
         
@@ -400,71 +508,190 @@ class TradingAnalyzer:
                 except:
                     return None
             
-            # Get current and previous values
+            # Get current values
             close = get_scalar('Close', last_idx)
             
-            # === TREND SIGNALS ===
+            # ===== TREND SIGNALS =====
+            print("📈 Generating trend signals...")
+            
+            # Moving Average Crossovers
+            for fast, slow in [(20, 50), (50, 200), (20, 200)]:
+                fast_ma = get_scalar(f'SMA_{fast}', last_idx)
+                slow_ma = get_scalar(f'SMA_{slow}', last_idx)
+                prev_fast = get_scalar(f'SMA_{fast}', prev_idx)
+                prev_slow = get_scalar(f'SMA_{slow}', prev_idx)
+                
+                if all(v is not None for v in [fast_ma, slow_ma, prev_fast, prev_slow]):
+                    if prev_fast <= prev_slow and fast_ma > slow_ma:
+                        signals.append({'type': f'MA_CROSS_{fast}_{slow}_BULLISH', 'strength': 'STRONG', 'direction': 'BULLISH'})
+                    elif prev_fast >= prev_slow and fast_ma < slow_ma:
+                        signals.append({'type': f'MA_CROSS_{fast}_{slow}_BEARISH', 'strength': 'STRONG', 'direction': 'BEARISH'})
+            
             # Price vs Moving Averages
             if close is not None:
                 for period in [20, 50, 200]:
                     sma = get_scalar(f'SMA_{period}', last_idx)
+                    ema = get_scalar(f'EMA_{period}', last_idx)
+                    
                     if sma is not None:
                         if close > sma:
                             signals.append({'type': f'ABOVE_{period}SMA', 'strength': 'MODERATE', 'direction': 'BULLISH'})
                         else:
                             signals.append({'type': f'BELOW_{period}SMA', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+                    
+                    if ema is not None:
+                        if close > ema:
+                            signals.append({'type': f'ABOVE_{period}EMA', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                        else:
+                            signals.append({'type': f'BELOW_{period}EMA', 'strength': 'MODERATE', 'direction': 'BEARISH'})
             
-            # === MOMENTUM SIGNALS ===
-            # RSI
+            # ===== MOMENTUM SIGNALS =====
+            print("📊 Generating momentum signals...")
+            
+            # RSI Signals
             rsi = get_scalar('RSI', last_idx)
             if rsi is not None:
                 if rsi < 30:
                     signals.append({'type': 'RSI_OVERSOLD', 'strength': 'STRONG', 'direction': 'BULLISH'})
                 elif rsi > 70:
                     signals.append({'type': 'RSI_OVERBOUGHT', 'strength': 'STRONG', 'direction': 'BEARISH'})
-                elif rsi < 35:
+                elif rsi < 40:
                     signals.append({'type': 'RSI_NEAR_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                elif rsi > 65:
+                elif rsi > 60:
                     signals.append({'type': 'RSI_NEAR_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
             
-            # MACD
+            # MACD Signals
             macd = get_scalar('MACD', last_idx)
-            signal = get_scalar('MACD_Signal', last_idx)
+            macd_signal = get_scalar('MACD_Signal', last_idx)
             prev_macd = get_scalar('MACD', prev_idx)
             prev_signal = get_scalar('MACD_Signal', prev_idx)
             
-            if all(v is not None for v in [macd, signal, prev_macd, prev_signal]):
-                if prev_macd <= prev_signal and macd > signal:
-                    signals.append({'type': 'MACD_BULLISH_CROSS', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                elif prev_macd >= prev_signal and macd < signal:
-                    signals.append({'type': 'MACD_BEARISH_CROSS', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            if all(v is not None for v in [macd, macd_signal, prev_macd, prev_signal]):
+                if prev_macd <= prev_signal and macd > macd_signal:
+                    signals.append({'type': 'MACD_BULLISH_CROSS', 'strength': 'STRONG', 'direction': 'BULLISH'})
+                elif prev_macd >= prev_signal and macd < macd_signal:
+                    signals.append({'type': 'MACD_BEARISH_CROSS', 'strength': 'STRONG', 'direction': 'BEARISH'})
+                
+                if macd > macd_signal:
+                    signals.append({'type': 'MACD_ABOVE_SIGNAL', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                else:
+                    signals.append({'type': 'MACD_BELOW_SIGNAL', 'strength': 'MODERATE', 'direction': 'BEARISH'})
             
-            # === VOLUME SIGNALS ===
+            # Stochastic Signals
+            stoch_k = get_scalar('Stoch_%K', last_idx)
+            stoch_d = get_scalar('Stoch_%D', last_idx)
+            if stoch_k is not None and stoch_d is not None:
+                if stoch_k < 20 and stoch_d < 20:
+                    signals.append({'type': 'STOCH_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                elif stoch_k > 80 and stoch_d > 80:
+                    signals.append({'type': 'STOCH_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # Williams %R Signals
+            williams = get_scalar('Williams_%R', last_idx)
+            if williams is not None:
+                if williams < -80:
+                    signals.append({'type': 'WILLIAMS_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                elif williams > -20:
+                    signals.append({'type': 'WILLIAMS_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # CCI Signals
+            cci = get_scalar('CCI', last_idx)
+            if cci is not None:
+                if cci < -100:
+                    signals.append({'type': 'CCI_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                elif cci > 100:
+                    signals.append({'type': 'CCI_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # ===== VOLUME SIGNALS =====
+            print("📈 Generating volume signals...")
+            
+            # Volume Ratio
             vol_ratio = get_scalar('Volume_Ratio', last_idx)
             if vol_ratio is not None:
                 if vol_ratio > 2.0:
                     signals.append({'type': 'HIGH_VOLUME', 'strength': 'STRONG', 'direction': 'NEUTRAL'})
                 elif vol_ratio > 1.5:
                     signals.append({'type': 'ABOVE_AVG_VOLUME', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
+                elif vol_ratio < 0.5:
+                    signals.append({'type': 'LOW_VOLUME', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
             
-            # A/D Line trending
+            # A/D Line Trend
             ad_line = get_scalar('AD_Line', last_idx)
             if ad_line is not None:
                 prev_ad = get_scalar('AD_Line', prev_idx)
-                if prev_ad is not None and ad_line > prev_ad:
-                    signals.append({'type': 'AD_BULLISH', 'strength': 'MODERATE', 'direction': 'BULLISH'})
-                elif prev_ad is not None and ad_line < prev_ad:
-                    signals.append({'type': 'AD_BEARISH', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+                if prev_ad is not None:
+                    if ad_line > prev_ad:
+                        signals.append({'type': 'AD_LINE_RISING', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                    elif ad_line < prev_ad:
+                        signals.append({'type': 'AD_LINE_FALLING', 'strength': 'MODERATE', 'direction': 'BEARISH'})
             
-            print(f"✅ Generated {len(signals)} signals")
+            # MFI Signals
+            mfi = get_scalar('MFI', last_idx)
+            if mfi is not None:
+                if mfi < 20:
+                    signals.append({'type': 'MFI_OVERSOLD', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                elif mfi > 80:
+                    signals.append({'type': 'MFI_OVERBOUGHT', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # ===== VOLATILITY SIGNALS =====
+            print("📉 Generating volatility signals...")
+            
+            # Bollinger Bands Signals
+            bb_percent = get_scalar('BB_%B', last_idx)
+            if bb_percent is not None:
+                if bb_percent < 0.2:
+                    signals.append({'type': 'BB_OVERSOLD', 'strength': 'STRONG', 'direction': 'BULLISH'})
+                elif bb_percent > 0.8:
+                    signals.append({'type': 'BB_OVERBOUGHT', 'strength': 'STRONG', 'direction': 'BEARISH'})
+                elif 0.4 < bb_percent < 0.6:
+                    signals.append({'type': 'BB_MIDDLE', 'strength': 'NEUTRAL', 'direction': 'NEUTRAL'})
+            
+            bb_width = get_scalar('BB_Width', last_idx)
+            if bb_width is not None:
+                if bb_width < 5:
+                    signals.append({'type': 'BB_SQUEEZE', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
+                elif bb_width > 15:
+                    signals.append({'type': 'BB_EXPANSION', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
+            
+            # ATR Signals
+            atr_pct = get_scalar('ATR_Pct', last_idx)
+            if atr_pct is not None:
+                if atr_pct > 3:
+                    signals.append({'type': 'HIGH_VOLATILITY', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
+                elif atr_pct < 1:
+                    signals.append({'type': 'LOW_VOLATILITY', 'strength': 'MODERATE', 'direction': 'NEUTRAL'})
+            
+            # ===== OSCILLATOR SIGNALS =====
+            print("📊 Generating oscillator signals...")
+            
+            # Awesome Oscillator
+            ao = get_scalar('AO', last_idx)
+            prev_ao = get_scalar('AO', prev_idx)
+            if ao is not None and prev_ao is not None:
+                if ao > 0 and prev_ao <= 0:
+                    signals.append({'type': 'AO_BULLISH_CROSS', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                elif ao < 0 and prev_ao >= 0:
+                    signals.append({'type': 'AO_BEARISH_CROSS', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            # Chaikin Oscillator
+            chaikin = get_scalar('Chaikin_Osc', last_idx)
+            if chaikin is not None:
+                if chaikin > 0:
+                    signals.append({'type': 'CHAIKIN_BULLISH', 'strength': 'MODERATE', 'direction': 'BULLISH'})
+                else:
+                    signals.append({'type': 'CHAIKIN_BEARISH', 'strength': 'MODERATE', 'direction': 'BEARISH'})
+            
+            print(f"✅ Generated {len(signals)} total signals")
             
         except Exception as e:
             print(f"⚠️ Signal generation error: {e}")
+            import traceback
+            traceback.print_exc()
         
         return signals
     
     def _detect_reversal_patterns(self, data: pd.DataFrame) -> Dict:
-        """Detect reversal patterns"""
+        """Detect reversal patterns from multiple indicators"""
         patterns = {
             'bullish_reversal': False,
             'bearish_reversal': False,
@@ -473,11 +700,10 @@ class TradingAnalyzer:
             'details': {}
         }
         
-        if len(data) < 20:
+        if len(data) < 30:
             return patterns
         
         try:
-            # Get scalar values
             last_idx = len(data) - 1
             
             def get_scalar(column, idx):
@@ -489,7 +715,7 @@ class TradingAnalyzer:
                 except:
                     return None
             
-            # === BULLISH REVERSAL PATTERNS ===
+            # ===== BULLISH REVERSAL INDICATORS =====
             bullish_count = 0
             bullish_details = []
             
@@ -499,25 +725,45 @@ class TradingAnalyzer:
                 bullish_count += 1
                 bullish_details.append(f"RSI oversold ({rsi:.1f})")
             
-            # MACD bullish crossover
-            macd = get_scalar('MACD', last_idx)
-            signal = get_scalar('MACD_Signal', last_idx)
-            if macd is not None and signal is not None and macd > signal:
-                if len(data) > 1:
-                    prev_macd = get_scalar('MACD', last_idx-1)
-                    prev_signal = get_scalar('MACD_Signal', last_idx-1)
-                    if prev_macd is not None and prev_signal is not None and prev_macd <= prev_signal:
-                        bullish_count += 1
-                        bullish_details.append("MACD bullish crossover")
+            # Stochastic oversold
+            stoch_k = get_scalar('Stoch_%K', last_idx)
+            stoch_d = get_scalar('Stoch_%D', last_idx)
+            if stoch_k is not None and stoch_d is not None and stoch_k < 20 and stoch_d < 20:
+                bullish_count += 1
+                bullish_details.append(f"Stochastic oversold (K={stoch_k:.1f}, D={stoch_d:.1f})")
+            
+            # Williams %R oversold
+            williams = get_scalar('Williams_%R', last_idx)
+            if williams is not None and williams < -80:
+                bullish_count += 1
+                bullish_details.append(f"Williams %R oversold ({williams:.1f})")
+            
+            # Bollinger Bands oversold
+            bb_percent = get_scalar('BB_%B', last_idx)
+            if bb_percent is not None and bb_percent < 0.2:
+                bullish_count += 1
+                bullish_details.append(f"BB position: {bb_percent*100:.1f}% (oversold)")
+            
+            # MFI oversold
+            mfi = get_scalar('MFI', last_idx)
+            if mfi is not None and mfi < 20:
+                bullish_count += 1
+                bullish_details.append(f"MFI oversold ({mfi:.1f})")
+            
+            # CCI oversold
+            cci = get_scalar('CCI', last_idx)
+            if cci is not None and cci < -100:
+                bullish_count += 1
+                bullish_details.append(f"CCI oversold ({cci:.1f})")
             
             # Determine bullish reversal
-            if bullish_count >= 2:
+            if bullish_count >= 3:
                 patterns['bullish_reversal'] = True
-                patterns['confidence'] = min(95, bullish_count * 25)
+                patterns['confidence'] = min(95, bullish_count * 20)
                 patterns['signals'] = bullish_details
                 patterns['details']['bullish_count'] = bullish_count
             
-            # === BEARISH REVERSAL PATTERNS ===
+            # ===== BEARISH REVERSAL INDICATORS =====
             bearish_count = 0
             bearish_details = []
             
@@ -526,21 +772,40 @@ class TradingAnalyzer:
                 bearish_count += 1
                 bearish_details.append(f"RSI overbought ({rsi:.1f})")
             
-            # MACD bearish crossover
-            if macd is not None and signal is not None and macd < signal:
-                if len(data) > 1:
-                    prev_macd = get_scalar('MACD', last_idx-1)
-                    prev_signal = get_scalar('MACD_Signal', last_idx-1)
-                    if prev_macd is not None and prev_signal is not None and prev_macd >= prev_signal:
-                        bearish_count += 1
-                        bearish_details.append("MACD bearish crossover")
+            # Stochastic overbought
+            if stoch_k is not None and stoch_d is not None and stoch_k > 80 and stoch_d > 80:
+                bearish_count += 1
+                bearish_details.append(f"Stochastic overbought (K={stoch_k:.1f}, D={stoch_d:.1f})")
+            
+            # Williams %R overbought
+            if williams is not None and williams > -20:
+                bearish_count += 1
+                bearish_details.append(f"Williams %R overbought ({williams:.1f})")
+            
+            # Bollinger Bands overbought
+            if bb_percent is not None and bb_percent > 0.8:
+                bearish_count += 1
+                bearish_details.append(f"BB position: {bb_percent*100:.1f}% (overbought)")
+            
+            # MFI overbought
+            if mfi is not None and mfi > 80:
+                bearish_count += 1
+                bearish_details.append(f"MFI overbought ({mfi:.1f})")
+            
+            # CCI overbought
+            if cci is not None and cci > 100:
+                bearish_count += 1
+                bearish_details.append(f"CCI overbought ({cci:.1f})")
             
             # Determine bearish reversal
-            if bearish_count >= 2:
+            if bearish_count >= 3:
                 patterns['bearish_reversal'] = True
-                patterns['confidence'] = max(patterns['confidence'], min(95, bearish_count * 25))
+                patterns['confidence'] = max(patterns['confidence'], min(95, bearish_count * 20))
                 patterns['signals'].extend(bearish_details)
                 patterns['details']['bearish_count'] = bearish_count
+            
+            if patterns['bullish_reversal'] or patterns['bearish_reversal']:
+                print(f"✅ Reversal pattern detected: {bullish_count} bullish, {bearish_count} bearish signals")
             
         except Exception as e:
             print(f"⚠️ Reversal pattern error: {e}")
@@ -554,10 +819,12 @@ class TradingAnalyzer:
             'bearish_rsi': False,
             'bullish_macd': False,
             'bearish_macd': False,
+            'bullish_stoch': False,
+            'bearish_stoch': False,
             'details': []
         }
         
-        if len(data) < lookback + 5:
+        if len(data) < lookback + 10:
             return divergences
         
         try:
@@ -566,17 +833,21 @@ class TradingAnalyzer:
             # Get arrays
             price = recent['Close'].values
             rsi = recent['RSI'].values if 'RSI' in recent.columns else None
+            macd = recent['MACD'].values if 'MACD' in recent.columns else None
+            stoch_k = recent['Stoch_%K'].values if 'Stoch_%K' in recent.columns else None
             
-            # Simple RSI divergence detection
-            if rsi is not None and len(price) >= 20:
-                price_slice = price[-20:]
-                rsi_slice = rsi[-20:]
+            # Simple divergence detection (last 20 periods)
+            slice_len = 20
+            
+            if len(price) >= slice_len and rsi is not None and len(rsi) >= slice_len:
+                price_slice = price[-slice_len:]
+                rsi_slice = rsi[-slice_len:]
                 
                 # Find minima and maxima
-                price_min = price_slice.min()
-                price_max = price_slice.max()
-                rsi_min = rsi_slice.min()
-                rsi_max = rsi_slice.max()
+                price_min_idx = np.argmin(price_slice)
+                price_max_idx = np.argmax(price_slice)
+                rsi_min_idx = np.argmin(rsi_slice)
+                rsi_max_idx = np.argmax(rsi_slice)
                 
                 # Bullish divergence: price makes lower low, RSI makes higher low
                 if price_slice[-1] < price_slice[-10] and rsi_slice[-1] > rsi_slice[-10]:
@@ -587,6 +858,35 @@ class TradingAnalyzer:
                 if price_slice[-1] > price_slice[-10] and rsi_slice[-1] < rsi_slice[-10]:
                     divergences['bearish_rsi'] = True
                     divergences['details'].append("RSI Bearish Divergence")
+            
+            if len(price) >= slice_len and macd is not None and len(macd) >= slice_len:
+                price_slice = price[-slice_len:]
+                macd_slice = macd[-slice_len:]
+                
+                # MACD divergence detection
+                if price_slice[-1] < price_slice[-10] and macd_slice[-1] > macd_slice[-10]:
+                    divergences['bullish_macd'] = True
+                    divergences['details'].append("MACD Bullish Divergence")
+                
+                if price_slice[-1] > price_slice[-10] and macd_slice[-1] < macd_slice[-10]:
+                    divergences['bearish_macd'] = True
+                    divergences['details'].append("MACD Bearish Divergence")
+            
+            if len(price) >= slice_len and stoch_k is not None and len(stoch_k) >= slice_len:
+                price_slice = price[-slice_len:]
+                stoch_slice = stoch_k[-slice_len:]
+                
+                # Stochastic divergence detection
+                if price_slice[-1] < price_slice[-10] and stoch_slice[-1] > stoch_slice[-10]:
+                    divergences['bullish_stoch'] = True
+                    divergences['details'].append("Stochastic Bullish Divergence")
+                
+                if price_slice[-1] > price_slice[-10] and stoch_slice[-1] < stoch_slice[-10]:
+                    divergences['bearish_stoch'] = True
+                    divergences['details'].append("Stochastic Bearish Divergence")
+            
+            if divergences['details']:
+                print(f"✅ Divergences detected: {len(divergences['details'])}")
             
         except Exception as e:
             print(f"⚠️ Divergence detection error: {e}")
@@ -607,23 +907,31 @@ class TradingAnalyzer:
                     'total_return': 0,
                     'avg_daily_return': 0,
                     'volatility': 0,
+                    'sharpe_ratio': 0,
                     'max_drawdown': 0,
                     'win_rate': 0,
+                    'best_day': 0,
+                    'worst_day': 0,
                 }
             
-            # Calculate win rate
+            # Calculate statistics
             win_count = (returns > 0).sum()
-            if isinstance(win_count, pd.Series):
-                win_count = win_count.iloc[0] if len(win_count) > 0 else 0
+            total_trades = len(returns)
             
             stats = {
                 'total_return': float(((close_series.iloc[-1] / close_series.iloc[0]) - 1) * 100),
                 'avg_daily_return': float(returns.mean() * 100),
                 'volatility': float(returns.std() * np.sqrt(252) * 100),
+                'sharpe_ratio': float(returns.mean() / returns.std() * np.sqrt(252)) if returns.std() != 0 else 0,
                 'max_drawdown': float(self._calculate_max_drawdown(close_series)),
-                'win_rate': float(win_count / len(returns) * 100),
+                'win_rate': float(win_count / total_trades * 100) if total_trades > 0 else 0,
+                'best_day': float(returns.max() * 100),
+                'worst_day': float(returns.min() * 100),
+                'avg_volume': float(data['Volume'].mean()) if 'Volume' in data.columns else 0,
+                'avg_true_range': float(data['ATR'].mean()) if 'ATR' in data.columns else 0,
             }
             
+            print(f"📊 Statistics calculated: Return={stats['total_return']:.1f}%, Volatility={stats['volatility']:.1f}%")
             return stats
         except Exception as e:
             print(f"Statistics calculation error: {e}")
@@ -642,9 +950,9 @@ class TradingAnalyzer:
     def _create_comprehensive_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
                                      signals: List[Dict], reversal_patterns: Dict,
                                      divergences: Dict, stats: Dict, exchange_info: Dict) -> str:
-        """Create comprehensive analysis summary"""
+        """Create comprehensive technical analysis summary"""
         try:
-            # Get scalar values
+            # Get latest values
             latest_close = float(data['Close'].iloc[-1])
             if len(data) > 1:
                 prev_close_val = float(data['Close'].iloc[-2])
@@ -659,36 +967,13 @@ class TradingAnalyzer:
             
             latest_volume = float(data['Volume'].iloc[-1]) if 'Volume' in data.columns else 0
             
+            # Count signals
             bull_signals = [s for s in signals if s['direction'] == 'BULLISH']
             bear_signals = [s for s in signals if s['direction'] == 'BEARISH']
             neutral_signals = [s for s in signals if s['direction'] == 'NEUTRAL']
             
             currency = info.get('currency', 'USD')
             currency_symbol = '$' if currency == 'USD' else '€' if currency == 'EUR' else '£' if currency == 'GBP' else f'{currency} '
-            
-            # Color codes - simplified (only green/red for indicators)
-            green_dot = "🟢"
-            red_dot = "🔴"
-            white_dot = "⚪"
-            
-            summary = f"""
-📊 TECHNICAL ANALYSIS: {ticker.upper()}
-
-📈 MARKET INFORMATION
-• Exchange: {exchange_info['exchange']}
-• Currency: {currency}
-• Last Price: {currency_symbol}{latest_close:.2f} ({daily_change:+.2f}%)
-• Volume: {self._format_number(latest_volume)} shares
-
-📊 PERFORMANCE STATISTICS
-• Total Return: {stats.get('total_return', 0):.2f}%
-• Avg Daily Return: {stats.get('avg_daily_return', 0):.3f}%
-• Win Rate: {stats.get('win_rate', 0):.1f}%
-• Volatility: {stats.get('volatility', 0):.1f}%
-• Max Drawdown: {stats.get('max_drawdown', 0):.1f}%
-
-KEY INDICATORS
-"""
             
             # Helper function to safely get indicator values
             def get_indicator(col):
@@ -700,114 +985,252 @@ KEY INDICATORS
                 except:
                     return None
             
+            # ===== CREATE COMPREHENSIVE SUMMARY =====
+            summary = f"""
+📊 COMPLETE TECHNICAL ANALYSIS: {ticker.upper()}
+
+📈 MARKET OVERVIEW
+• Exchange: {exchange_info['exchange']}
+• Currency: {currency}
+• Last Price: {currency_symbol}{latest_close:.2f} ({daily_change:+.2f}%)
+• Volume: {self._format_number(latest_volume)} shares
+
+📊 PERFORMANCE STATISTICS
+• Total Return: {stats.get('total_return', 0):.2f}%
+• Avg Daily Return: {stats.get('avg_daily_return', 0):.3f}%
+• Volatility: {stats.get('volatility', 0):.1f}%
+• Sharpe Ratio: {stats.get('sharpe_ratio', 0):.2f}
+• Max Drawdown: {stats.get('max_drawdown', 0):.1f}%
+• Win Rate: {stats.get('win_rate', 0):.1f}%
+• Best Day: {stats.get('best_day', 0):+.2f}%
+• Worst Day: {stats.get('worst_day', 0):+.2f}%
+
+📈 TREND ANALYSIS
+"""
+            
+            # Moving Averages
+            for period in [20, 50, 200]:
+                sma = get_indicator(f'SMA_{period}')
+                ema = get_indicator(f'EMA_{period}')
+                if sma is not None:
+                    if latest_close > sma:
+                        summary += f"• 🟢 Above {period}-day SMA: {currency_symbol}{sma:.2f}\n"
+                    else:
+                        summary += f"• 🔴 Below {period}-day SMA: {currency_symbol}{sma:.2f}\n"
+            
+            # Parabolic SAR
+            sar = get_indicator('SAR')
+            if sar is not None:
+                if latest_close > sar:
+                    summary += f"• 🟢 Above SAR: {currency_symbol}{sar:.2f}\n"
+                else:
+                    summary += f"• 🔴 Below SAR: {currency_symbol}{sar:.2f}\n"
+            
+            summary += f"""
+📊 MOMENTUM INDICATORS
+"""
+            
             # RSI
             rsi = get_indicator('RSI')
             if rsi is not None:
                 if rsi < 30:
-                    status = f"{green_dot} OVERSOLD"
+                    summary += f"• 🟢 RSI OVERSOLD: {rsi:.1f}\n"
                 elif rsi > 70:
-                    status = f"{red_dot} OVERBOUGHT"
+                    summary += f"• 🔴 RSI OVERBOUGHT: {rsi:.1f}\n"
                 elif rsi < 50:
-                    status = f"{red_dot} BEARISH"
+                    summary += f"• 🔴 RSI Bearish: {rsi:.1f}\n"
                 else:
-                    status = f"{green_dot} BULLISH"
-                summary += f"• {status} RSI: {rsi:.1f}\n"
+                    summary += f"• 🟢 RSI Bullish: {rsi:.1f}\n"
             
             # MACD
             macd = get_indicator('MACD')
             signal = get_indicator('MACD_Signal')
             if macd is not None and signal is not None:
                 if macd > signal:
-                    trend = f"{green_dot} BULLISH"
+                    summary += f"• 🟢 MACD Bullish: {macd:.4f} > Signal: {signal:.4f}\n"
                 else:
-                    trend = f"{red_dot} BEARISH"
-                summary += f"• {trend} MACD: {macd:.4f} | Signal: {signal:.4f}\n"
+                    summary += f"• 🔴 MACD Bearish: {macd:.4f} < Signal: {signal:.4f}\n"
             
-            # Moving averages
-            for period in [20, 50, 200]:
-                sma = get_indicator(f'SMA_{period}')
-                if sma is not None:
-                    if latest_close > sma:
-                        position = f"{green_dot} ABOVE"
-                    else:
-                        position = f"{red_dot} BELOW"
-                    distance = abs(latest_close - sma) / sma * 100 if sma != 0 else 0
-                    summary += f"• {position} {period}-day MA: {currency_symbol}{sma:.2f} ({distance:.1f}% away)\n"
+            # Stochastic
+            stoch_k = get_indicator('Stoch_%K')
+            stoch_d = get_indicator('Stoch_%D')
+            if stoch_k is not None and stoch_d is not None:
+                if stoch_k < 20 and stoch_d < 20:
+                    summary += f"• 🟢 Stochastic OVERSOLD: K={stoch_k:.1f}, D={stoch_d:.1f}\n"
+                elif stoch_k > 80 and stoch_d > 80:
+                    summary += f"• 🔴 Stochastic OVERBOUGHT: K={stoch_k:.1f}, D={stoch_d:.1f}\n"
+                else:
+                    summary += f"• ⚪ Stochastic Neutral: K={stoch_k:.1f}, D={stoch_d:.1f}\n"
             
-            # Volume
+            # Williams %R
+            williams = get_indicator('Williams_%R')
+            if williams is not None:
+                if williams < -80:
+                    summary += f"• 🟢 Williams %R OVERSOLD: {williams:.1f}\n"
+                elif williams > -20:
+                    summary += f"• 🔴 Williams %R OVERBOUGHT: {williams:.1f}\n"
+            
+            # CCI
+            cci = get_indicator('CCI')
+            if cci is not None:
+                if cci < -100:
+                    summary += f"• 🟢 CCI OVERSOLD: {cci:.1f}\n"
+                elif cci > 100:
+                    summary += f"• 🔴 CCI OVERBOUGHT: {cci:.1f}\n"
+            
+            summary += f"""
+📈 VOLUME ANALYSIS
+"""
+            
+            # Volume Ratio
             vol_ratio = get_indicator('Volume_Ratio')
             if vol_ratio is not None:
-                if vol_ratio > 1.5:
-                    vol_status = f"{green_dot} HIGH"
+                if vol_ratio > 2.0:
+                    summary += f"• 🔥 High Volume: {vol_ratio:.1f}x average\n"
+                elif vol_ratio > 1.5:
+                    summary += f"• 📈 Above Avg Volume: {vol_ratio:.1f}x average\n"
                 elif vol_ratio < 0.5:
-                    vol_status = f"{red_dot} LOW"
+                    summary += f"• 📉 Low Volume: {vol_ratio:.1f}x average\n"
                 else:
-                    vol_status = f"{white_dot} NORMAL"
-                summary += f"• {vol_status} Volume: {vol_ratio:.1f}x average\n"
+                    summary += f"• ⚪ Normal Volume: {vol_ratio:.1f}x average\n"
             
             # A/D Line
             ad_line = get_indicator('AD_Line')
-            if ad_line is not None and len(data) > 1:
-                prev_ad = get_indicator('AD_Line')
-                if prev_ad is not None and ad_line > prev_ad:
-                    ad_status = f"{green_dot} RISING"
-                elif prev_ad is not None and ad_line < prev_ad:
-                    ad_status = f"{red_dot} FALLING"
+            if ad_line is not None:
+                summary += f"• A/D Line: {ad_line:.0f}\n"
+            
+            # MFI
+            mfi = get_indicator('MFI')
+            if mfi is not None:
+                if mfi < 20:
+                    summary += f"• 🟢 MFI OVERSOLD: {mfi:.1f}\n"
+                elif mfi > 80:
+                    summary += f"• 🔴 MFI OVERBOUGHT: {mfi:.1f}\n"
+            
+            summary += f"""
+📉 VOLATILITY & BOLLINGER BANDS
+"""
+            
+            # Bollinger Bands
+            bb_percent = get_indicator('BB_%B')
+            if bb_percent is not None:
+                if bb_percent < 0.2:
+                    summary += f"• 🟢 BB OVERSOLD: {bb_percent*100:.1f}%\n"
+                elif bb_percent > 0.8:
+                    summary += f"• 🔴 BB OVERBOUGHT: {bb_percent*100:.1f}%\n"
                 else:
-                    ad_status = f"{white_dot} FLAT"
-                summary += f"• {ad_status} A/D Line: {ad_line:.0f}\n"
+                    summary += f"• ⚪ BB Position: {bb_percent*100:.1f}%\n"
+            
+            bb_width = get_indicator('BB_Width')
+            if bb_width is not None:
+                if bb_width < 5:
+                    summary += f"• 📏 BB Squeeze: Width={bb_width:.1f}%\n"
+                elif bb_width > 15:
+                    summary += f"• 📈 BB Expansion: Width={bb_width:.1f}%\n"
+            
+            # ATR
+            atr_pct = get_indicator('ATR_Pct')
+            if atr_pct is not None:
+                if atr_pct > 3:
+                    summary += f"• ⚡ High Volatility: ATR={atr_pct:.1f}%\n"
+                elif atr_pct < 1:
+                    summary += f"• 🐌 Low Volatility: ATR={atr_pct:.1f}%\n"
+            
+            summary += f"""
+📊 OSCILLATORS
+"""
+            
+            # Awesome Oscillator
+            ao = get_indicator('AO')
+            if ao is not None:
+                if ao > 0:
+                    summary += f"• 🟢 Awesome Oscillator Bullish: {ao:.2f}\n"
+                else:
+                    summary += f"• 🔴 Awesome Oscillator Bearish: {ao:.2f}\n"
+            
+            # Chaikin Oscillator
+            chaikin = get_indicator('Chaikin_Osc')
+            if chaikin is not None:
+                if chaikin > 0:
+                    summary += f"• 🟢 Chaikin Oscillator Bullish: {chaikin:.0f}\n"
+                else:
+                    summary += f"• 🔴 Chaikin Oscillator Bearish: {chaikin:.0f}\n"
+            
+            # Support/Resistance
+            resistance = get_indicator('Resistance_20')
+            support = get_indicator('Support_20')
+            if resistance is not None and support is not None:
+                summary += f"""
+📈 SUPPORT & RESISTANCE
+• Resistance (20-day): {currency_symbol}{resistance:.2f}
+• Support (20-day): {currency_symbol}{support:.2f}
+• Current: {currency_symbol}{latest_close:.2f}
+"""
             
             # Divergences
             if divergences['details']:
-                summary += f"\nDIVERGENCES DETECTED\n"
-                for detail in divergences['details'][:3]:
+                summary += f"\n🔀 DIVERGENCES DETECTED\n"
+                for detail in divergences['details']:
                     if 'Bullish' in detail:
-                        summary += f"• {green_dot} {detail}\n"
+                        summary += f"• 🟢 {detail}\n"
                     elif 'Bearish' in detail:
-                        summary += f"• {red_dot} {detail}\n"
+                        summary += f"• 🔴 {detail}\n"
+                    else:
+                        summary += f"• ⚪ {detail}\n"
             
             # Reversal patterns
             if reversal_patterns['bullish_reversal']:
-                summary += f"\nBULLISH REVERSAL PATTERN\n"
+                summary += f"\n🔄 BULLISH REVERSAL PATTERN\n"
                 summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
-                for signal in reversal_patterns['signals'][:3]:
-                    summary += f"• {green_dot} {signal}\n"
+                for signal in reversal_patterns['signals']:
+                    summary += f"• 🟢 {signal}\n"
             
             if reversal_patterns['bearish_reversal']:
-                summary += f"\nBEARISH REVERSAL PATTERN\n"
+                summary += f"\n🔄 BEARISH REVERSAL PATTERN\n"
                 summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
-                for signal in reversal_patterns['signals'][:3]:
-                    summary += f"• {red_dot} {signal}\n"
+                for signal in reversal_patterns['signals']:
+                    summary += f"• 🔴 {signal}\n"
             
-            summary += f"\nSIGNAL SUMMARY\n"
-            summary += f"• {green_dot} Bullish: {len(bull_signals)}\n"
-            summary += f"• {red_dot} Bearish: {len(bear_signals)}\n"
-            summary += f"• {white_dot} Neutral: {len(neutral_signals)}\n"
+            summary += f"""
+📊 SIGNAL SUMMARY
+• 🟢 Bullish Signals: {len(bull_signals)}
+• 🔴 Bearish Signals: {len(bear_signals)}
+• ⚪ Neutral Signals: {len(neutral_signals)}
+"""
             
             # Overall recommendation
-            if len(bull_signals) > len(bear_signals) + 3:
-                recommendation = f"{green_dot} BULLISH"
-            elif len(bear_signals) > len(bull_signals) + 3:
-                recommendation = f"{red_dot} BEARISH"
-            elif len(bull_signals) > len(bear_signals):
-                recommendation = f"{green_dot} MILD BULLISH"
-            elif len(bear_signals) > len(bull_signals):
-                recommendation = f"{red_dot} MILD BEARISH"
-            else:
-                recommendation = f"{white_dot} NEUTRAL"
+            strong_bull = len([s for s in signals if s['direction'] == 'BULLISH' and s['strength'] == 'STRONG'])
+            strong_bear = len([s for s in signals if s['direction'] == 'BEARISH' and s['strength'] == 'STRONG'])
             
-            summary += f"\nOVERALL: {recommendation}"
+            if strong_bull > strong_bear + 2:
+                recommendation = "🟢 STRONG BULLISH - Multiple strong bullish signals"
+            elif strong_bear > strong_bull + 2:
+                recommendation = "🔴 STRONG BEARISH - Multiple strong bearish signals"
+            elif len(bull_signals) > len(bear_signals) + 5:
+                recommendation = "🟢 BULLISH - Strong buying pressure"
+            elif len(bear_signals) > len(bull_signals) + 5:
+                recommendation = "🔴 BEARISH - Strong selling pressure"
+            elif len(bull_signals) > len(bear_signals):
+                recommendation = "🟢 MILD BULLISH - Slight edge to bulls"
+            elif len(bear_signals) > len(bull_signals):
+                recommendation = "🔴 MILD BEARISH - Slight edge to bears"
+            else:
+                recommendation = "⚪ NEUTRAL - Balanced market"
+            
+            summary += f"\n🎯 OVERALL RECOMMENDATION: {recommendation}"
             summary += f"\n\n⏰ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             
             return summary
             
         except Exception as e:
             print(f"Summary creation error: {e}")
-            return f"📊 Analysis for {ticker}\n\nComplete technical analysis generated."
+            import traceback
+            traceback.print_exc()
+            return f"📊 Complete Technical Analysis for {ticker}\n\nComprehensive analysis with all indicators."
     
     def _create_compact_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
                                signals: List[Dict], divergences: Dict) -> str:
-        """Create compact summary for photo captions"""
+        """Create compact summary for chart caption"""
         try:
             latest_close = float(data['Close'].iloc[-1])
             if len(data) > 1:
@@ -824,45 +1247,47 @@ KEY INDICATORS
             bull_signals = len([s for s in signals if s['direction'] == 'BULLISH'])
             bear_signals = len([s for s in signals if s['direction'] == 'BEARISH'])
             
-            # Get RSI value
+            # Get key indicators
             rsi_value = None
+            macd_value = None
+            bb_percent = None
+            vol_ratio = None
+            
             if 'RSI' in data.columns:
                 try:
                     rsi_value = float(data['RSI'].iloc[-1])
                 except:
-                    rsi_value = None
+                    pass
             
-            # Get MACD position
-            macd_status = ""
             if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
                 try:
-                    macd = float(data['MACD'].iloc[-1])
-                    signal = float(data['MACD_Signal'].iloc[-1])
-                    if macd > signal:
-                        macd_status = "🟢 MACD ↑"
-                    else:
-                        macd_status = "🔴 MACD ↓"
+                    macd_value = float(data['MACD'].iloc[-1])
+                    signal_value = float(data['MACD_Signal'].iloc[-1])
+                    macd_status = "🟢" if macd_value > signal_value else "🔴"
                 except:
                     macd_status = ""
             
-            # Get volume ratio
-            vol_ratio = ""
+            if 'BB_%B' in data.columns:
+                try:
+                    bb_percent = float(data['BB_%B'].iloc[-1])
+                except:
+                    pass
+            
             if 'Volume_Ratio' in data.columns:
                 try:
-                    vol_ratio_val = float(data['Volume_Ratio'].iloc[-1])
-                    vol_ratio = f"📊 {vol_ratio_val:.1f}x vol"
+                    vol_ratio = float(data['Volume_Ratio'].iloc[-1])
                 except:
-                    vol_ratio = ""
+                    pass
             
             # Determine overall sentiment
-            if bull_signals > bear_signals + 2:
-                sentiment = '🟢 BULLISH'
-            elif bear_signals > bull_signals + 2:
-                sentiment = '🔴 BEARISH'
+            if bull_signals > bear_signals + 5:
+                sentiment = '🟢 STRONG BULLISH'
+            elif bear_signals > bull_signals + 5:
+                sentiment = '🔴 STRONG BEARISH'
             elif bull_signals > bear_signals:
-                sentiment = '🟢 MILD BULLISH'
+                sentiment = '🟢 BULLISH'
             elif bear_signals > bull_signals:
-                sentiment = '🔴 MILD BEARISH'
+                sentiment = '🔴 BEARISH'
             else:
                 sentiment = '⚪ NEUTRAL'
             
@@ -881,10 +1306,24 @@ KEY INDICATORS
                     summary += f"📈 RSI: {rsi_value:.1f} ⚪\n"
             
             if macd_status:
-                summary += f"{macd_status}\n"
+                summary += f"{macd_status} MACD: {macd_value:.4f}\n" if macd_value else f"{macd_status} MACD\n"
             
-            if vol_ratio:
-                summary += f"{vol_ratio}\n"
+            if bb_percent is not None:
+                if bb_percent < 0.2:
+                    summary += f"📉 BB: {bb_percent*100:.1f}% 🟢\n"
+                elif bb_percent > 0.8:
+                    summary += f"📉 BB: {bb_percent*100:.1f}% 🔴\n"
+                else:
+                    summary += f"📉 BB: {bb_percent*100:.1f}% ⚪\n"
+            
+            if vol_ratio is not None:
+                if vol_ratio > 1.5:
+                    summary += f"📊 Vol: {vol_ratio:.1f}x 🔥\n"
+                else:
+                    summary += f"📊 Vol: {vol_ratio:.1f}x\n"
+            
+            if divergences['details']:
+                summary += f"🔀 Div: {len(divergences['details'])}\n"
             
             summary += f"📶 🟢{bull_signals} | 🔴{bear_signals}\n"
             summary += f"🎯 {sentiment}"
@@ -893,7 +1332,7 @@ KEY INDICATORS
             
         except Exception as e:
             print(f"Compact summary error: {e}")
-            return f"📊 {ticker.upper()} - Technical Analysis"
+            return f"📊 {ticker.upper()} - Complete Technical Analysis"
     
     def _format_number(self, num: float) -> str:
         """Format large numbers"""
