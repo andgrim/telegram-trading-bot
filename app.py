@@ -20,8 +20,14 @@ logger = logging.getLogger(__name__)
 # Initialize Flask app
 app = Flask(__name__)
 
-# Initialize bot
+# Initialize bot IMMEDIATELY
 bot = UniversalTradingBot()
+bot_initialized = bot.initialize()
+
+if not bot_initialized:
+    logger.error("FAILED TO INITIALIZE BOT! Check TELEGRAM_TOKEN")
+else:
+    logger.info("✅ Bot initialized successfully")
 
 @app.route('/')
 def index():
@@ -31,13 +37,18 @@ def index():
         'service': 'Universal Trading Analysis Bot',
         'version': '2.0.0',
         'architecture': 'webhook',
-        'instructions': 'This is a Telegram bot backend. Access via Telegram @your_bot_username'
+        'instructions': 'This is a Telegram bot backend. Access via Telegram @your_bot_username',
+        'bot_initialized': bot_initialized
     })
 
 @app.route('/health')
 def health():
     """Health check endpoint for Render"""
-    return jsonify({'status': 'healthy', 'service': 'trading-bot'}), 200
+    return jsonify({
+        'status': 'healthy' if bot_initialized else 'warning',
+        'service': 'trading-bot',
+        'bot_initialized': bot_initialized
+    }), 200
 
 @app.route('/webhook/<secret>', methods=['POST'])
 def webhook(secret):
@@ -48,6 +59,10 @@ def webhook(secret):
         logger.warning(f"Invalid webhook secret: {secret}")
         return jsonify({'error': 'Invalid secret'}), 403
     
+    if not bot_initialized:
+        logger.error("Bot not initialized, rejecting webhook")
+        return jsonify({'error': 'Bot not ready'}), 503
+    
     try:
         # Process update
         update_data = request.get_json()
@@ -56,7 +71,8 @@ def webhook(secret):
         # Process update in background thread
         threading.Thread(
             target=bot.process_webhook_update,
-            args=(update_data,)
+            args=(update_data,),
+            daemon=True
         ).start()
         
         return jsonify({'status': 'ok'}), 200
@@ -64,36 +80,20 @@ def webhook(secret):
         logger.error(f"Webhook processing error: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/set_webhook', methods=['POST'])
-def set_webhook():
-    """Manually set webhook endpoint (for initial setup)"""
-    try:
-        bot_url = os.getenv('RENDER_EXTERNAL_URL')
-        secret = os.getenv('WEBHOOK_SECRET')
-        
-        if not bot_url or not secret:
-            return jsonify({'error': 'Missing environment variables'}), 400
-        
-        success = bot.set_webhook(bot_url, secret)
-        
-        if success:
-            return jsonify({
-                'status': 'success',
-                'webhook_url': f"{bot_url}/webhook/{secret}",
-                'message': 'Webhook set successfully'
-            }), 200
-        else:
-            return jsonify({'error': 'Failed to set webhook'}), 500
-    except Exception as e:
-        logger.error(f"Set webhook error: {e}")
-        return jsonify({'error': str(e)}), 500
+@app.route('/debug')
+def debug():
+    """Debug endpoint"""
+    return jsonify({
+        'bot_initialized': bot_initialized,
+        'webhook_secret_set': bool(os.getenv('WEBHOOK_SECRET')),
+        'telegram_token_set': bool(os.getenv('TELEGRAM_TOKEN')),
+        'environment': os.environ.get('RENDER', 'Not on Render')
+    })
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 10000))
     
-    # Start the bot initialization in background
-    bot.initialize()
-    
-    # Start Flask server
     logger.info(f"Starting Flask server on port {port}")
+    logger.info(f"Bot initialized: {bot_initialized}")
+    
     app.run(host='0.0.0.0', port=port, debug=False)
