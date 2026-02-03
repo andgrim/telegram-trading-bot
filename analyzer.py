@@ -1,7 +1,6 @@
 """
-Universal Trading Analyzer - Local Version
-Complete technical analysis with all indicators
-Optimized for Telegram and local usage
+Universal Trading Analyzer - Enhanced Version
+Complete technical analysis with advanced correlations and divergences
 """
 import yfinance as yf
 import pandas as pd
@@ -46,7 +45,7 @@ class SimpleCache:
 
 
 class TradingAnalyzer:
-    """Universal analyzer for ALL Yahoo Finance tickers with complete technical analysis"""
+    """Enhanced universal analyzer with advanced correlations and divergences"""
     
     def __init__(self):
         self.config = CONFIG
@@ -55,14 +54,13 @@ class TradingAnalyzer:
             max_size=self.config.MAX_CACHE_SIZE
         )
         
-        print("✅ Universal Analyzer initialized (Complete Technical Analysis)")
-        print("🌍 Supports all markets and tickers")
-        print("📊 Includes: Trend, Momentum, Volume, Volatility, Oscillators")
+        print("✅ Enhanced Analyzer initialized with advanced correlations")
+        print("🔗 Features: Trend, Momentum, Volume, Volatility, Oscillators, Correlations")
     
     async def analyze_ticker(self, ticker_symbol: str, period: str = '1y') -> Dict:
-        """Complete technical analysis method for any ticker"""
+        """Complete technical analysis with advanced correlations"""
         try:
-            print(f"🔍 Analyzing {ticker_symbol} ({period})")
+            print(f"🔍 Analyzing {ticker_symbol} ({period}) with advanced correlations")
             
             # Map period to Yahoo Finance format
             period_map = {
@@ -74,18 +72,15 @@ class TradingAnalyzer:
             
             # Format ticker for Yahoo Finance
             formatted_ticker = self._format_ticker_for_yfinance(ticker_symbol)
-            print(f"Formatted: {ticker_symbol} -> {formatted_ticker}")
             
             # Get exchange information
             exchange_info = self.config.get_exchange_info(formatted_ticker)
-            print(f"Exchange: {exchange_info['exchange']}")
             
             # Check cache first
             cache_key = f"{formatted_ticker}_{yf_period}"
             cached_data = self.cache.get(cache_key)
             
             if cached_data is not None:
-                print("✅ Using cached data")
                 data = cached_data
             else:
                 # Fetch fresh data from Yahoo Finance
@@ -116,29 +111,39 @@ class TradingAnalyzer:
             # Detect reversal patterns
             reversal_patterns = self._detect_reversal_patterns(data)
             
-            # Detect divergences
+            # Detect basic divergences
             divergences = self._detect_divergences(data)
+            
+            # Detect advanced divergences and correlations (NEW)
+            advanced_divergences = self._detect_advanced_divergences(data)
+            
+            # Detect volume correlations (NEW)
+            volume_correlations = self._detect_volume_correlations(data)
             
             # Calculate performance statistics
             stats = self._calculate_statistics(data)
             
             # Prepare comprehensive summary
-            summary = self._create_comprehensive_summary(
+            summary = self._create_enhanced_summary(
                 ticker_symbol, data, info, signals, 
-                reversal_patterns, divergences, stats, exchange_info
+                reversal_patterns, divergences, advanced_divergences,
+                volume_correlations, stats, exchange_info
             )
             
             # Prepare compact summary for chart caption
-            compact = self._create_compact_summary(ticker_symbol, data, info, signals, divergences)
+            compact = self._create_compact_summary(ticker_symbol, data, info, signals, 
+                                                  divergences, advanced_divergences, 
+                                                  volume_correlations)
             
             # Debug information
             indicator_count = len([col for col in data.columns if col not in ['Open', 'High', 'Low', 'Close', 'Volume']])
             bull_count = len([s for s in signals if s['direction'] == 'BULLISH'])
             bear_count = len([s for s in signals if s['direction'] == 'BEARISH'])
             
-            print(f"✅ Analysis complete for {ticker_symbol}")
-            print(f"📊 Indicators calculated: {indicator_count}")
-            print(f"📊 Signals: {bull_count} Bullish, {bear_count} Bearish, {len(signals)} Total")
+            print(f"✅ Enhanced analysis complete for {ticker_symbol}")
+            print(f"📊 Indicators: {indicator_count}")
+            print(f"📈 Signals: {bull_count} Bullish, {bear_count} Bearish")
+            print(f"🔗 Advanced correlations: {len(advanced_divergences)}")
             
             return {
                 'success': True,
@@ -147,6 +152,8 @@ class TradingAnalyzer:
                 'signals': signals,
                 'reversal_patterns': reversal_patterns,
                 'divergences': divergences,
+                'advanced_divergences': advanced_divergences,
+                'volume_correlations': volume_correlations,
                 'stats': stats,
                 'summary': summary,
                 'compact_summary': compact,
@@ -301,8 +308,7 @@ class TradingAnalyzer:
                     df[col] = pd.Series(values, index=df.index)
                     df[col] = pd.to_numeric(df[col], errors='coerce')
             
-            print(f"📊 Data shape: {df.shape}")
-            print(f"📊 Calculating complete technical indicators...")
+            print(f"📊 Calculating enhanced technical indicators...")
             
             # === TREND INDICATORS ===
             print("📈 Calculating trend indicators...")
@@ -468,15 +474,13 @@ class TradingAnalyzer:
             # Display key indicators
             if len(df) > 0:
                 last_row = df.iloc[-1]
-                print(f"\n📊 KEY INDICATORS (Latest):")
+                print(f"\n📊 KEY INDICATORS:")
                 print(f"  Price: ${last_row.get('Close', 0):.2f}")
                 print(f"  RSI: {last_row.get('RSI', 0):.1f}")
                 print(f"  MACD: {last_row.get('MACD', 0):.4f}")
-                print(f"  BB %B: {last_row.get('BB_%B', 0):.2f}")
                 print(f"  Volume Ratio: {last_row.get('Volume_Ratio', 0):.1f}x")
                 print(f"  A/D Line: {last_row.get('AD_Line', 0):.0f}")
-                print(f"  Stochastic %K: {last_row.get('Stoch_%K', 0):.1f}")
-                print(f"  CCI: {last_row.get('CCI', 0):.1f}")
+                print(f"  OBV: {last_row.get('OBV', 0):.0f}")
             
             indicator_count = len([col for col in df.columns if col not in ['Open', 'High', 'Low', 'Close', 'Volume']])
             print(f"\n✅ Calculated {indicator_count} technical indicators")
@@ -487,6 +491,183 @@ class TradingAnalyzer:
             traceback.print_exc()
         
         return df
+    
+    # === NEW ADVANCED CORRELATION METHODS ===
+    
+    def _detect_ad_price_divergence(self, data: pd.DataFrame) -> Dict:
+        """Detect divergence between A/D Line and Price"""
+        if len(data) < 30:
+            return {}
+        
+        recent = data.iloc[-30:].copy()
+        price = recent['Close'].values
+        ad_line = recent['AD_Line'].values
+        
+        signals = []
+        
+        # Bullish: Price makes lower low, A/D makes higher low
+        if price[-1] < price[-15] and ad_line[-1] > ad_line[-15]:
+            signals.append("📈 Bullish A/D Divergence - Smart money accumulating during downtrend")
+        
+        # Bearish: Price makes higher high, A/D makes lower high
+        if price[-1] > price[-15] and ad_line[-1] < ad_line[-15]:
+            signals.append("📉 Bearish A/D Divergence - Smart money distributing during uptrend")
+        
+        return {'ad_price_divergence': signals}
+    
+    def _detect_ad_obv_correlation(self, data: pd.DataFrame) -> Dict:
+        """Correlation between A/D Line and OBV"""
+        if 'AD_Line' not in data.columns or 'OBV' not in data.columns:
+            return {}
+        
+        recent = data.iloc[-20:].copy()
+        ad_trend = recent['AD_Line'].pct_change().mean()
+        obv_trend = recent['OBV'].pct_change().mean()
+        
+        correlation = np.corrcoef(recent['AD_Line'], recent['OBV'])[0, 1]
+        
+        signals = []
+        
+        if correlation > 0.8:
+            signals.append("✅ Strong volume confirmation - A/D and OBV aligned")
+        elif correlation < 0.3:
+            signals.append("⚠️ Volume divergence - A/D and OBV show different signals")
+        
+        if ad_trend > 0 and obv_trend > 0:
+            signals.append("📈 Volume indicators confirming uptrend")
+        elif ad_trend < 0 and obv_trend < 0:
+            signals.append("📉 Volume indicators confirming downtrend")
+        
+        return {
+            'volume_correlation': signals,
+            'correlation_coefficient': round(correlation, 3)
+        }
+    
+    def _detect_ad_mfi_confirmation(self, data: pd.DataFrame) -> Dict:
+        """Check if A/D Line confirms MFI signals"""
+        if 'AD_Line' not in data.columns or 'MFI' not in data.columns:
+            return {}
+        
+        recent = data.iloc[-10:].copy()
+        ad_trend = recent['AD_Line'].iloc[-1] > recent['AD_Line'].iloc[-5]
+        mfi = recent['MFI'].iloc[-1]
+        
+        signals = []
+        
+        if mfi < 20 and ad_trend:  # MFI oversold + A/D rising
+            signals.append("🟢 Strong accumulation during oversold - Bullish reversal likely")
+        elif mfi > 80 and not ad_trend:  # MFI overbought + A/D falling
+            signals.append("🔴 Strong distribution during overbought - Bearish reversal likely")
+        
+        return {'ad_mfi_confirmation': signals}
+    
+    def _detect_multi_timeframe_rsi(self, data: pd.DataFrame) -> Dict:
+        """Detect RSI divergence across different timeframes"""
+        signals = []
+        
+        if len(data) < 100:
+            return {}
+        
+        # Daily RSI
+        daily_rsi = data['RSI'].iloc[-1]
+        weekly_rsi = data['RSI'].rolling(5).mean().iloc[-1]  # Approx weekly
+        monthly_rsi = data['RSI'].rolling(21).mean().iloc[-1]  # Approx monthly
+        
+        if daily_rsi < 30 and weekly_rsi > 40:
+            signals.append("📈 Daily oversold but weekly not oversold - Potential bounce")
+        elif daily_rsi > 70 and weekly_rsi < 60:
+            signals.append("📉 Daily overbought but weekly not overbought - Potential pullback")
+        
+        if monthly_rsi > 50 and weekly_rsi > 50 and daily_rsi < 40:
+            signals.append("🟢 Strong bullish setup - Higher timeframes bullish, daily oversold")
+        elif monthly_rsi < 50 and weekly_rsi < 50 and daily_rsi > 60:
+            signals.append("🔴 Strong bearish setup - Higher timeframes bearish, daily overbought")
+        
+        return {'multi_timeframe_rsi': signals}
+    
+    def _detect_bb_rsi_squeeze(self, data: pd.DataFrame) -> Dict:
+        """Detect Bollinger Bands squeeze with RSI confirmation"""
+        if 'BB_Width' not in data.columns or 'RSI' not in data.columns:
+            return {}
+        
+        bb_width = data['BB_Width'].iloc[-1]
+        rsi = data['RSI'].iloc[-1]
+        
+        signals = []
+        
+        if bb_width < 5:  # Bollinger Squeeze
+            if 40 < rsi < 60:
+                signals.append("⚡ BB Squeeze with neutral RSI - Big move imminent")
+            elif rsi < 40:
+                signals.append("🟢 BB Squeeze with oversold RSI - Potential bullish breakout")
+            elif rsi > 60:
+                signals.append("🔴 BB Squeeze with overbought RSI - Potential bearish breakdown")
+        
+        # Check for expansion after squeeze
+        if len(data) > 10:
+            bb_width_prev = data['BB_Width'].iloc[-5]
+            if bb_width > bb_width_prev * 1.3 and bb_width_prev < 6:
+                signals.append("💥 BB Expansion detected - Volatility breakout in progress")
+        
+        return {'bb_rsi_squeeze': signals}
+    
+    def _detect_macd_volume_correlation(self, data: pd.DataFrame) -> Dict:
+        """Correlation between MACD histogram and volume"""
+        if 'MACD_Hist' not in data.columns or 'Volume' not in data.columns:
+            return {}
+        
+        recent = data.iloc[-10:].copy()
+        
+        # Check if MACD histogram expansion is supported by volume
+        macd_hist_change = recent['MACD_Hist'].diff().iloc[-1]
+        volume_change = recent['Volume'].pct_change().iloc[-1]
+        
+        signals = []
+        
+        if macd_hist_change > 0 and volume_change > 0.5:  # Bullish MACD with high volume
+            signals.append("📈 Bullish MACD confirmed by high volume - Strong signal")
+        elif macd_hist_change < 0 and volume_change > 0.5:  # Bearish MACD with high volume
+            signals.append("📉 Bearish MACD confirmed by high volume - Strong signal")
+        elif abs(macd_hist_change) > 0 and abs(volume_change) < 0.1:  # MACD move without volume
+            signals.append("⚠️ MACD move lacks volume confirmation - Weak signal")
+        
+        return {'macd_volume_correlation': signals}
+    
+    def _detect_volume_correlations(self, data: pd.DataFrame) -> Dict:
+        """Detect all volume-based correlations"""
+        correlations = {}
+        
+        # A/D + Price divergence
+        ad_price = self._detect_ad_price_divergence(data)
+        correlations.update(ad_price)
+        
+        # A/D + OBV correlation
+        ad_obv = self._detect_ad_obv_correlation(data)
+        correlations.update(ad_obv)
+        
+        # A/D + MFI confirmation
+        ad_mfi = self._detect_ad_mfi_confirmation(data)
+        correlations.update(ad_mfi)
+        
+        # MACD + Volume correlation
+        macd_vol = self._detect_macd_volume_correlation(data)
+        correlations.update(macd_vol)
+        
+        return correlations
+    
+    def _detect_advanced_divergences(self, data: pd.DataFrame) -> Dict:
+        """Detect advanced divergence patterns"""
+        divergences = {}
+        
+        # Multi-timeframe RSI
+        mtf_rsi = self._detect_multi_timeframe_rsi(data)
+        divergences.update(mtf_rsi)
+        
+        # Bollinger Bands + RSI squeeze
+        bb_rsi = self._detect_bb_rsi_squeeze(data)
+        divergences.update(bb_rsi)
+        
+        return divergences
     
     def _generate_all_signals(self, data: pd.DataFrame) -> List[Dict]:
         """Generate trading signals from all technical indicators"""
@@ -883,7 +1064,7 @@ class TradingAnalyzer:
                     divergences['details'].append("Stochastic Bearish Divergence")
             
             if divergences['details']:
-                print(f"✅ Divergences detected: {len(divergences['details'])}")
+                print(f"✅ Basic divergences detected: {len(divergences['details'])}")
             
         except Exception as e:
             print(f"⚠️ Divergence detection error: {e}")
@@ -962,10 +1143,11 @@ class TradingAnalyzer:
         
         return text
     
-    def _create_comprehensive_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
-                                     signals: List[Dict], reversal_patterns: Dict,
-                                     divergences: Dict, stats: Dict, exchange_info: Dict) -> str:
-        """Create comprehensive technical analysis summary"""
+    def _create_enhanced_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
+                                signals: List[Dict], reversal_patterns: Dict,
+                                divergences: Dict, advanced_divergences: Dict,
+                                volume_correlations: Dict, stats: Dict, exchange_info: Dict) -> str:
+        """Create enhanced technical analysis summary with correlations"""
         try:
             # Get latest values
             latest_close = float(data['Close'].iloc[-1])
@@ -1000,9 +1182,9 @@ class TradingAnalyzer:
                 except:
                     return None
             
-            # === CREATE SUMMARY ===
+            # === CREATE ENHANCED SUMMARY ===
             summary = f"""
-📊 COMPLETE TECHNICAL ANALYSIS: {ticker.upper()}
+📊 ENHANCED TECHNICAL ANALYSIS: {ticker.upper()}
 
 📈 MARKET OVERVIEW
 • Exchange: {exchange_info['exchange']}
@@ -1069,22 +1251,6 @@ class TradingAnalyzer:
                 else:
                     summary += f"• ⚪ Stochastic Neutral: K={stoch_k:.1f}, D={stoch_d:.1f}\n"
             
-            # Williams %R
-            williams = get_indicator('Williams_%R')
-            if williams is not None:
-                if williams < -80:
-                    summary += f"• 🟢 Williams %R OVERSOLD: {williams:.1f}\n"
-                elif williams > -20:
-                    summary += f"• 🔴 Williams %R OVERBOUGHT: {williams:.1f}\n"
-            
-            # CCI
-            cci = get_indicator('CCI')
-            if cci is not None:
-                if cci < -100:
-                    summary += f"• 🟢 CCI OVERSOLD: {cci:.1f}\n"
-                elif cci > 100:
-                    summary += f"• 🔴 CCI OVERBOUGHT: {cci:.1f}\n"
-            
             summary += f"""
 📈 VOLUME ANALYSIS
 """
@@ -1105,6 +1271,11 @@ class TradingAnalyzer:
             ad_line = get_indicator('AD_Line')
             if ad_line is not None:
                 summary += f"• A/D Line: {ad_line:.0f}\n"
+            
+            # OBV
+            obv = get_indicator('OBV')
+            if obv is not None:
+                summary += f"• OBV: {obv:.0f}\n"
             
             # MFI
             mfi = get_indicator('MFI')
@@ -1135,48 +1306,42 @@ class TradingAnalyzer:
                 elif bb_width > 15:
                     summary += f"• 📈 BB Expansion: Width={bb_width:.1f}%\n"
             
-            # ATR
-            atr_pct = get_indicator('ATR_Pct')
-            if atr_pct is not None:
-                if atr_pct > 3:
-                    summary += f"• ⚡ High Volatility: ATR={atr_pct:.1f}%\n"
-                elif atr_pct < 1:
-                    summary += f"• 🐌 Low Volatility: ATR={atr_pct:.1f}%\n"
-            
+            # === ADVANCED CORRELATIONS SECTION ===
             summary += f"""
-📊 OSCILLATORS
+🔗 ADVANCED CORRELATIONS & DIVERGENCES
 """
             
-            # Awesome Oscillator
-            ao = get_indicator('AO')
-            if ao is not None:
-                if ao > 0:
-                    summary += f"• 🟢 Awesome Oscillator Bullish: {ao:.2f}\n"
-                else:
-                    summary += f"• 🔴 Awesome Oscillator Bearish: {ao:.2f}\n"
+            # Volume Correlations
+            if 'ad_price_divergence' in volume_correlations:
+                for signal in volume_correlations['ad_price_divergence']:
+                    summary += f"• {signal}\n"
             
-            # Chaikin Oscillator
-            chaikin = get_indicator('Chaikin_Osc')
-            if chaikin is not None:
-                if chaikin > 0:
-                    summary += f"• 🟢 Chaikin Oscillator Bullish: {chaikin:.0f}\n"
-                else:
-                    summary += f"• 🔴 Chaikin Oscillator Bearish: {chaikin:.0f}\n"
+            if 'volume_correlation' in volume_correlations:
+                for signal in volume_correlations['volume_correlation']:
+                    summary += f"• {signal}\n"
+                if 'correlation_coefficient' in volume_correlations:
+                    summary += f"• A/D-OBV Correlation: {volume_correlations['correlation_coefficient']:.3f}\n"
             
-            # Support/Resistance
-            resistance = get_indicator('Resistance_20')
-            support = get_indicator('Support_20')
-            if resistance is not None and support is not None:
-                summary += f"""
-📈 SUPPORT & RESISTANCE
-• Resistance (20-day): {currency_symbol}{resistance:.2f}
-• Support (20-day): {currency_symbol}{support:.2f}
-• Current: {currency_symbol}{latest_close:.2f}
-"""
+            if 'ad_mfi_confirmation' in volume_correlations:
+                for signal in volume_correlations['ad_mfi_confirmation']:
+                    summary += f"• {signal}\n"
             
-            # Divergences
+            if 'macd_volume_correlation' in volume_correlations:
+                for signal in volume_correlations['macd_volume_correlation']:
+                    summary += f"• {signal}\n"
+            
+            # Advanced Divergences
+            if 'multi_timeframe_rsi' in advanced_divergences:
+                for signal in advanced_divergences['multi_timeframe_rsi']:
+                    summary += f"• {signal}\n"
+            
+            if 'bb_rsi_squeeze' in advanced_divergences:
+                for signal in advanced_divergences['bb_rsi_squeeze']:
+                    summary += f"• {signal}\n"
+            
+            # Basic Divergences
             if divergences['details']:
-                summary += f"\n🔀 DIVERGENCES DETECTED\n"
+                summary += f"\n🔀 BASIC DIVERGENCES\n"
                 for detail in divergences['details']:
                     if 'Bullish' in detail:
                         summary += f"• 🟢 {detail}\n"
@@ -1231,14 +1396,15 @@ class TradingAnalyzer:
             return self._clean_text_for_telegram(summary)
             
         except Exception as e:
-            print(f"Summary creation error: {e}")
+            print(f"Enhanced summary creation error: {e}")
             import traceback
             traceback.print_exc()
-            return f"📊 Complete Technical Analysis for {ticker}\n\nComprehensive analysis with all indicators."
+            return f"📊 Enhanced Technical Analysis for {ticker}\n\nAnalysis with advanced correlations and divergences."
     
     def _create_compact_summary(self, ticker: str, data: pd.DataFrame, info: Dict, 
-                               signals: List[Dict], divergences: Dict) -> str:
-        """Create compact summary for chart caption"""
+                               signals: List[Dict], divergences: Dict,
+                               advanced_divergences: Dict, volume_correlations: Dict) -> str:
+        """Create compact summary for chart caption with correlations"""
         try:
             latest_close = float(data['Close'].iloc[-1])
             if len(data) > 1:
@@ -1286,6 +1452,13 @@ class TradingAnalyzer:
                     vol_ratio = float(data['Volume_Ratio'].iloc[-1])
                 except:
                     pass
+            
+            # Count advanced signals
+            adv_signals = 0
+            if advanced_divergences:
+                for key, value in advanced_divergences.items():
+                    if isinstance(value, list):
+                        adv_signals += len(value)
             
             # Determine overall sentiment
             if bull_signals > bear_signals + 5:
@@ -1335,6 +1508,9 @@ class TradingAnalyzer:
             if divergences['details']:
                 summary += f"🔀 Div: {len(divergences['details'])}\n"
             
+            if adv_signals > 0:
+                summary += f"🔗 Adv: {adv_signals}\n"
+            
             summary += f"📶 🟢{bull_signals} | 🔴{bear_signals}\n"
             summary += f"🎯 {sentiment}"
             
@@ -1343,7 +1519,7 @@ class TradingAnalyzer:
             
         except Exception as e:
             print(f"Compact summary error: {e}")
-            return f"📊 {ticker.upper()} - Complete Technical Analysis"
+            return f"📊 {ticker.upper()} - Enhanced Technical Analysis"
     
     def _format_number(self, num: float) -> str:
         """Format large numbers for display"""

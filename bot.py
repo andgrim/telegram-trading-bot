@@ -1,8 +1,6 @@
 """
-Universal Trading Bot for Telegram - Local Polling Version
-Simple version without webhook for local use
-Added period buttons for analysis
-FIXED: Telegram HTML parsing error
+Universal Trading Bot for Telegram - Enhanced Version
+Complete analysis with advanced correlations and divergences
 """
 import logging
 import os
@@ -28,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class UniversalTradingBot:
-    """Universal Telegram bot for ALL markets - Local polling version"""
+    """Enhanced Universal Telegram bot with advanced correlations"""
     
     def __init__(self):
         self.config = CONFIG
@@ -68,7 +66,7 @@ class UniversalTradingBot:
                 logger.error("TELEGRAM_TOKEN not found in environment")
                 return False
             
-            logger.info("Initializing bot application for polling...")
+            logger.info("Initializing enhanced bot application for polling...")
             
             # Create application
             self.application = Application.builder().token(token).build()
@@ -77,7 +75,7 @@ class UniversalTradingBot:
             self._setup_handlers()
             
             self.initialized = True
-            logger.info("✅ Bot application initialized successfully")
+            logger.info("✅ Enhanced bot application initialized successfully")
             
             return True
             
@@ -178,7 +176,14 @@ class UniversalTradingBot:
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
         welcome = """
-🤖 **Universal Trading Analysis Bot - Local Version**
+🤖 **Enhanced Universal Trading Analysis Bot**
+
+🔗 **NEW: Advanced Correlations & Divergences**
+• A/D Line vs Price divergences
+• Volume indicator correlations (A/D, OBV, MFI)
+• Multi-timeframe RSI analysis
+• Bollinger Bands + RSI squeeze detection
+• MACD + Volume confirmation
 
 🌍 **Supports ALL markets worldwide:**
 • US Stocks (AAPL, MSFT, TSLA)
@@ -189,9 +194,10 @@ class UniversalTradingBot:
 
 📊 **Complete Technical Analysis:**
 • RSI, MACD, Moving Averages (20 MA in green)
-• Volume and A/D Line
-• Divergence detection
+• Volume indicators with A/D Line
+• Divergence and correlation detection
 • Performance statistics
+• Advanced pattern recognition
 
 **Commands:**
 /start - This menu
@@ -199,13 +205,13 @@ class UniversalTradingBot:
 /examples - Show ticker examples
 /help - Detailed help
 
-**Simply send a ticker symbol to start analysis!**
+**Simply send a ticker symbol to start enhanced analysis!**
         """
         
         keyboard = [
             [InlineKeyboardButton("📈 Start Analysis", callback_data="new_ticker")],
             [InlineKeyboardButton("🇺🇸 US Stocks", callback_data="examples_US Stocks")],
-            [InlineKeyboardButton("❓ Help", callback_data="help")]
+            [InlineKeyboardButton("🔗 View Features", callback_data="help")]
         ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -219,11 +225,12 @@ class UniversalTradingBot:
     async def _test_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /test command"""
         await update.message.reply_text(
-            "✅ Bot is working!\n\n"
-            "Try these tickers:\n"
+            "✅ Enhanced bot is working!\n\n"
+            "Try these tickers for advanced correlations:\n"
             "/analyze AAPL 1y\n"
             "/analyze ENEL.MI 6m\n"
-            "/analyze BTC-USD 3m",
+            "/analyze BTC-USD 3m\n"
+            "/analyze SPY 2y",
             parse_mode=ParseMode.HTML
         )
     
@@ -261,25 +268,25 @@ class UniversalTradingBot:
             # Default to 1 year
             period = '1y'
         
-        await self._perform_analysis(update, context, ticker, period)
+        await self._perform_enhanced_analysis(update, context, ticker, period)
     
-    async def _perform_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE, 
-                              ticker: str, period: str):
-        """Perform analysis - FIXED version with proper text cleaning"""
+    async def _perform_enhanced_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                       ticker: str, period: str):
+        """Perform enhanced analysis with advanced correlations"""
         chat_id = update.effective_chat.id
         
         # Send typing indicator
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         
-        # Status message
+        # Status message with enhanced features mention
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🔄 Analyzing {ticker} ({self.periods.get(period, period)})...",
+            text=f"🔗 Enhanced Analysis for {ticker} ({self.periods.get(period, period)})...",
             parse_mode=ParseMode.HTML
         )
         
         try:
-            # Perform analysis
+            # Perform enhanced analysis
             analysis = await self.analyzer.analyze_ticker(ticker, period)
             
             if not analysis['success']:
@@ -314,15 +321,30 @@ class UniversalTradingBot:
             except Exception as e:
                 logger.info(f"Chart generation skipped: {e}")
             
+            # Count advanced correlations for notification
+            advanced_correlations_count = 0
+            if analysis.get('advanced_divergences'):
+                for key, value in analysis['advanced_divergences'].items():
+                    if isinstance(value, list):
+                        advanced_correlations_count += len(value)
+            
+            if analysis.get('volume_correlations'):
+                for key, value in analysis['volume_correlations'].items():
+                    if isinstance(value, list) and key != 'correlation_coefficient':
+                        advanced_correlations_count += len(value)
+            
+            # Enhance compact summary with correlation count
+            compact_summary = analysis.get('compact_summary', '')
+            if advanced_correlations_count > 0:
+                correlation_note = f"🔗 {advanced_correlations_count} advanced correlations detected\n"
+                compact_summary = correlation_note + compact_summary
+            
             # Create keyboard with period options
             reply_markup = self._get_analysis_keyboard(ticker, period)
             
             # Clean the text for Telegram
-            compact_summary = analysis.get('compact_summary', '')
-            full_summary = analysis.get('summary', '')
-            
-            # Clean text to avoid HTML parsing errors
             compact_summary_clean = self._clean_telegram_text(compact_summary)
+            full_summary = analysis.get('summary', '')
             full_summary_clean = self._clean_telegram_text(full_summary)
             
             # Truncate if necessary
@@ -455,8 +477,8 @@ class UniversalTradingBot:
                     )
             
         except Exception as e:
-            logger.error(f"Analysis failed: {e}")
-            error_msg = f"❌ Analysis failed for {ticker}\n\n"
+            logger.error(f"Enhanced analysis failed: {e}")
+            error_msg = f"❌ Enhanced analysis failed for {ticker}\n\n"
             error_msg += f"Error: {str(e)[:100]}"
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -472,19 +494,49 @@ class UniversalTradingBot:
     
     async def _handle_examples(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /examples command"""
-        examples_text = "📋 **Example Tickers by Category:**\n\n"
-        
-        for category, tickers in self.example_tickers.items():
-            examples_text += f"**{category}:**\n"
-            examples_text += f"• {', '.join(tickers[:5])}\n\n"
-        
-        examples_text += "**Simply click a ticker below or type one:**"
+        examples_text = """
+📋 **Example Tickers for Enhanced Analysis:**
+
+🔗 **US Stocks:**
+• AAPL (Apple), MSFT (Microsoft), TSLA (Tesla)
+• GOOGL (Google), NVDA (Nvidia), AMZN (Amazon)
+
+🇪🇺 **European Stocks:**
+• ENEL.MI (Enel Italy), AIR.PA (Airbus France)
+• SAP.DE (SAP Germany), HSBA.L (HSBC UK)
+
+📈 **ETFs & Funds:**
+• SPY (S&P 500 ETF), QQQ (NASDAQ ETF)
+• VOO (Vanguard S&P 500), GLD (Gold ETF)
+
+₿ **Cryptocurrencies:**
+• BTC-USD (Bitcoin), ETH-USD (Ethereum)
+• XRP-USD (Ripple)
+
+📊 **Indices:**
+• ^GSPC (S&P 500), ^DJI (Dow Jones)
+• ^IXIC (NASDAQ Composite)
+
+**Simply click a ticker below or type one:**
+"""
         
         # Create keyboard with example tickers
         keyboard = []
-        for category, tickers in self.example_tickers.items():
-            for ticker in tickers[:3]:  # Show first 3 from each category
-                keyboard.append([InlineKeyboardButton(ticker, callback_data=f"ticker_{ticker}")])
+        
+        # US Stocks
+        keyboard.append([InlineKeyboardButton("AAPL", callback_data=f"ticker_AAPL"),
+                        InlineKeyboardButton("MSFT", callback_data=f"ticker_MSFT"),
+                        InlineKeyboardButton("TSLA", callback_data=f"ticker_TSLA")])
+        
+        # European Stocks
+        keyboard.append([InlineKeyboardButton("ENEL.MI", callback_data=f"ticker_ENEL.MI"),
+                        InlineKeyboardButton("AIR.PA", callback_data=f"ticker_AIR.PA"),
+                        InlineKeyboardButton("SAP.DE", callback_data=f"ticker_SAP.DE")])
+        
+        # ETFs & Crypto
+        keyboard.append([InlineKeyboardButton("SPY", callback_data=f"ticker_SPY"),
+                        InlineKeyboardButton("BTC-USD", callback_data=f"ticker_BTC-USD"),
+                        InlineKeyboardButton("^GSPC", callback_data=f"ticker_^GSPC")])
         
         keyboard.append([InlineKeyboardButton("📈 Enter Custom Ticker", callback_data="new_ticker")])
         
@@ -499,9 +551,16 @@ class UniversalTradingBot:
     async def _handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
         help_text = """
-📖 **Universal Trading Bot Help - Local Version**
+📖 **Enhanced Trading Bot Help**
 
-**SUPPORTED MARKETS:**
+🔗 **NEW ADVANCED FEATURES:**
+• A/D Line vs Price Divergences
+• Volume Indicator Correlations (A/D, OBV, MFI)
+• Multi-timeframe RSI Analysis
+• Bollinger Bands + RSI Squeeze Detection
+• MACD + Volume Confirmation
+
+🌍 **SUPPORTED MARKETS:**
 • US Stocks: AAPL, MSFT, TSLA, GOOGL, AMZN
 • European Stocks (with suffix):
   - Italy: .MI (ENEL.MI)
@@ -511,23 +570,30 @@ class UniversalTradingBot:
 • Cryptocurrencies: BTC-USD, ETH-USD
 • Indices: ^GSPC (S&P 500), ^DJI (Dow Jones)
 
-**PERIOD OPTIONS:**
+📊 **ENHANCED INDICATORS:**
+• Price with 20, 50, 200 MAs (20 MA in green)
+• Volume indicators: A/D Line, OBV, MFI
+• RSI (14) with multi-timeframe analysis
+• MACD (12, 26, 9) with volume correlation
+• Bollinger Bands with squeeze detection
+
+⏰ **PERIOD OPTIONS:**
 • 3 Months (3m)
 • 6 Months (6m)
 • 1 Year (1y) - Default
 • 2 Years (2y)
 • 5 Years (5y)
 
-**INDICATORS INCLUDED:**
-• Price with 20, 50, 200 MAs (20 MA in green)
-• Volume with A/D Line
-• RSI (14)
-• MACD (12, 26, 9)
+🎯 **ADVANCED CORRELATIONS:**
+1. A/D Line vs Price: Smart money detection
+2. Volume Confirmation: A/D, OBV, MFI alignment
+3. BB + RSI Squeeze: Breakout probability
+4. MACD + Volume: Signal strength confirmation
 
-**HOW TO USE:**
+📈 **HOW TO USE:**
 1. Send a ticker symbol (AAPL, ENEL.MI, BTC-USD)
 2. Select analysis period
-3. View results and chart
+3. View enhanced results with correlations
 4. Use buttons to change period or analyze new ticker
 
 **EXAMPLES:**
@@ -539,7 +605,7 @@ class UniversalTradingBot:
 **Or simply type: AAPL, TSLA, BTC-USD**
         """
         
-        keyboard = [[InlineKeyboardButton("📈 Start Analysis", callback_data="new_ticker")]]
+        keyboard = [[InlineKeyboardButton("📈 Start Enhanced Analysis", callback_data="new_ticker")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
@@ -557,13 +623,17 @@ class UniversalTradingBot:
         
         if data == "new_ticker":
             await query.edit_message_text(
-                "📊 Enter a ticker symbol:\n\n"
-                "Examples:\n"
-                "• AAPL (Apple)\n"
-                "• ENEL.MI (Enel Italy)\n"
-                "• BTC-USD (Bitcoin)\n"
-                "• ^GSPC (S&P 500)\n\n"
-                "Or click examples below:",
+                """
+📊 Enter a ticker symbol for enhanced analysis:
+
+**Examples with advanced correlations:**
+• AAPL (Apple) - Volume correlations
+• ENEL.MI (Enel Italy) - European analysis
+• BTC-USD (Bitcoin) - Crypto correlations
+• ^GSPC (S&P 500) - Index analysis
+• SPY (S&P 500 ETF) - ETF analysis
+
+**Or click examples below:""",
                 parse_mode=ParseMode.HTML
             )
         
@@ -574,7 +644,7 @@ class UniversalTradingBot:
             ticker = data.replace("ticker_", "")
             # Show period selection for this ticker
             await query.edit_message_text(
-                f"📊 Select period for {ticker}:",
+                f"🔗 Select period for {ticker} (Enhanced Analysis):",
                 reply_markup=self._get_period_keyboard(ticker)
             )
         
@@ -582,7 +652,7 @@ class UniversalTradingBot:
             ticker = data.replace("change_period_", "")
             # Show period selection for this ticker
             await query.edit_message_text(
-                f"📊 Select period for {ticker}:",
+                f"🔄 Change period for {ticker}:",
                 reply_markup=self._get_period_keyboard(ticker)
             )
         
@@ -591,7 +661,7 @@ class UniversalTradingBot:
             if len(parts) >= 3:
                 ticker = parts[1]
                 period = parts[2]
-                await self._perform_analysis(update, context, ticker, period)
+                await self._perform_enhanced_analysis(update, context, ticker, period)
     
     async def _handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle text messages (ticker input)"""
@@ -601,14 +671,22 @@ class UniversalTradingBot:
         if len(text) > 1 and len(text) < 20:
             # Show period selection for this ticker
             await update.message.reply_text(
-                f"📊 Select period for {text}:",
+                f"🔗 Select period for {text} (Enhanced Analysis):",
                 reply_markup=self._get_period_keyboard(text)
             )
         else:
             await update.message.reply_text(
-                "Please enter a valid ticker symbol.\n\n"
-                "Examples: AAPL, ENEL.MI, BTC-USD\n\n"
-                "Or use: /analyze TICKER PERIOD",
+                """
+Please enter a valid ticker symbol.
+
+**Examples for advanced correlations:**
+• AAPL, MSFT, TSLA (US Stocks)
+• ENEL.MI, AIR.PA (European)
+• BTC-USD, ETH-USD (Crypto)
+• SPY, QQQ (ETFs)
+• ^GSPC (S&P 500)
+
+**Or use: /analyze TICKER PERIOD**""",
                 parse_mode=ParseMode.HTML
             )
     
@@ -616,8 +694,14 @@ class UniversalTradingBot:
         """Run the bot with polling"""
         if not self.initialized:
             if not self.initialize():
-                logger.error("Failed to initialize bot. Exiting.")
+                logger.error("Failed to initialize enhanced bot. Exiting.")
                 return
         
-        logger.info("Starting bot polling...")
+        logger.info("Starting enhanced bot polling...")
+        print("\n" + "="*50)
+        print("🤖 ENHANCED UNIVERSAL TRADING BOT STARTED")
+        print("🔗 Features: Advanced Correlations & Divergences")
+        print("🌍 Supports: All markets worldwide")
+        print("📊 Includes: Volume correlations, multi-timeframe analysis")
+        print("="*50 + "\n")
         self.application.run_polling(allowed_updates=Update.ALL_TYPES)
