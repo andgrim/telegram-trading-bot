@@ -221,7 +221,7 @@ class TradingAnalyzer:
                 data = ticker_obj.history(
                     period=period,
                     interval="1d",
-                    timeout=self.config.YAHOO_TIMEOUT
+                    timeout=self.config.YAHOO_TIMEOVerdana
                 )
                 return data if not data.empty else None
             except Exception as e2:
@@ -296,11 +296,15 @@ class TradingAnalyzer:
             # Price transformations
             df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
             
-            # Moving Averages
+            # Moving Averages - Calculate properly for entire dataset
             for period in [20, 50, 200]:
                 if len(df) >= period:
-                    df[f'SMA_{period}'] = df['Close'].rolling(window=period).mean()
+                    df[f'SMA_{period}'] = df['Close'].rolling(window=period, min_periods=1).mean()
                     df[f'EMA_{period}'] = df['Close'].ewm(span=period, adjust=False).mean()
+                else:
+                    # If not enough data, use expanding mean
+                    df[f'SMA_{period}'] = df['Close'].expanding().mean()
+                    df[f'EMA_{period}'] = df['Close'].ewm(span=min(len(df), period), adjust=False).mean()
             
             # MACD
             if len(df) >= 26:
@@ -314,8 +318,8 @@ class TradingAnalyzer:
             # RSI
             if len(df) >= 14:
                 delta = df['Close'].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
                 rs = gain / loss
                 df['RSI'] = 100 - (100 / (1 + rs))
                 df['RSI'] = df['RSI'].fillna(50)
@@ -338,14 +342,14 @@ class TradingAnalyzer:
                 clv = clv.fillna(0)
                 df['AD_Line'] = (clv * df['Volume']).cumsum()
                 
-                df['Volume_MA_20'] = df['Volume'].rolling(window=20).mean()
+                df['Volume_MA_20'] = df['Volume'].rolling(window=20, min_periods=1).mean()
                 df['Volume_Ratio'] = df['Volume'] / df['Volume_MA_20'].replace(0, 1)
                 df['Volume_Ratio'] = df['Volume_Ratio'].fillna(1)
             
             # Bollinger Bands
             if len(df) >= 20:
-                df['BB_Middle'] = df['Close'].rolling(20).mean()
-                bb_std = df['Close'].rolling(20).std()
+                df['BB_Middle'] = df['Close'].rolling(20, min_periods=1).mean()
+                bb_std = df['Close'].rolling(20, min_periods=1).std()
                 df['BB_Upper'] = df['BB_Middle'] + (bb_std * 2)
                 df['BB_Lower'] = df['BB_Middle'] - (bb_std * 2)
                 df['BB_%B'] = (df['Close'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'])
@@ -662,14 +666,13 @@ class TradingAnalyzer:
             currency = info.get('currency', 'USD')
             currency_symbol = '$' if currency == 'USD' else '€' if currency == 'EUR' else '£' if currency == 'GBP' else f'{currency} '
             
-            # Color codes - simplified
+            # Color codes - simplified (only green/red for indicators)
             green_dot = "🟢"
             red_dot = "🔴"
-            yellow_dot = "🟡"
             white_dot = "⚪"
             
             summary = f"""
-📊 {green_dot} TECHNICAL ANALYSIS: {ticker.upper()} {green_dot}
+📊 TECHNICAL ANALYSIS: {ticker.upper()}
 
 📈 MARKET INFORMATION
 • Exchange: {exchange_info['exchange']}
@@ -684,7 +687,7 @@ class TradingAnalyzer:
 • Volatility: {stats.get('volatility', 0):.1f}%
 • Max Drawdown: {stats.get('max_drawdown', 0):.1f}%
 
-{yellow_dot} KEY INDICATORS {yellow_dot}
+KEY INDICATORS
 """
             
             # Helper function to safely get indicator values
@@ -705,9 +708,9 @@ class TradingAnalyzer:
                 elif rsi > 70:
                     status = f"{red_dot} OVERBOUGHT"
                 elif rsi < 50:
-                    status = f"{yellow_dot} BEARISH"
+                    status = f"{red_dot} BEARISH"
                 else:
-                    status = f"{white_dot} BULLISH"
+                    status = f"{green_dot} BULLISH"
                 summary += f"• {status} RSI: {rsi:.1f}\n"
             
             # MACD
@@ -735,9 +738,9 @@ class TradingAnalyzer:
             vol_ratio = get_indicator('Volume_Ratio')
             if vol_ratio is not None:
                 if vol_ratio > 1.5:
-                    vol_status = f"{yellow_dot} HIGH"
+                    vol_status = f"{green_dot} HIGH"
                 elif vol_ratio < 0.5:
-                    vol_status = f"{yellow_dot} LOW"
+                    vol_status = f"{red_dot} LOW"
                 else:
                     vol_status = f"{white_dot} NORMAL"
                 summary += f"• {vol_status} Volume: {vol_ratio:.1f}x average\n"
@@ -756,7 +759,7 @@ class TradingAnalyzer:
             
             # Divergences
             if divergences['details']:
-                summary += f"\n{yellow_dot} DIVERGENCES DETECTED {yellow_dot}\n"
+                summary += f"\nDIVERGENCES DETECTED\n"
                 for detail in divergences['details'][:3]:
                     if 'Bullish' in detail:
                         summary += f"• {green_dot} {detail}\n"
@@ -765,18 +768,18 @@ class TradingAnalyzer:
             
             # Reversal patterns
             if reversal_patterns['bullish_reversal']:
-                summary += f"\n{green_dot} BULLISH REVERSAL PATTERN {green_dot}\n"
+                summary += f"\nBULLISH REVERSAL PATTERN\n"
                 summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
                 for signal in reversal_patterns['signals'][:3]:
                     summary += f"• {green_dot} {signal}\n"
             
             if reversal_patterns['bearish_reversal']:
-                summary += f"\n{red_dot} BEARISH REVERSAL PATTERN {red_dot}\n"
+                summary += f"\nBEARISH REVERSAL PATTERN\n"
                 summary += f"• Confidence: {reversal_patterns['confidence']}%\n"
                 for signal in reversal_patterns['signals'][:3]:
                     summary += f"• {red_dot} {signal}\n"
             
-            summary += f"\n{yellow_dot} SIGNAL SUMMARY {yellow_dot}\n"
+            summary += f"\nSIGNAL SUMMARY\n"
             summary += f"• {green_dot} Bullish: {len(bull_signals)}\n"
             summary += f"• {red_dot} Bearish: {len(bear_signals)}\n"
             summary += f"• {white_dot} Neutral: {len(neutral_signals)}\n"
@@ -793,7 +796,7 @@ class TradingAnalyzer:
             else:
                 recommendation = f"{white_dot} NEUTRAL"
             
-            summary += f"\n{yellow_dot} OVERALL: {recommendation}"
+            summary += f"\nOVERALL: {recommendation}"
             summary += f"\n\n⏰ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             
             return summary

@@ -1,6 +1,7 @@
 """
 Universal Trading Bot for Telegram - Local Polling Version
 Simple version without webhook for local use
+Added period buttons for analysis
 """
 import logging
 import os
@@ -35,6 +36,15 @@ class UniversalTradingBot:
         # Telegram application
         self.application = None
         self.initialized = False
+        
+        # Period options
+        self.periods = {
+            '3m': '3 Months',
+            '6m': '6 Months', 
+            '1y': '1 Year',
+            '2y': '2 Years',
+            '5y': '5 Years'
+        }
         
         # Example tickers
         self.example_tickers = {
@@ -95,6 +105,46 @@ class UniversalTradingBot:
         
         logger.info("All handlers setup completed")
     
+    def _get_period_keyboard(self, ticker: str) -> InlineKeyboardMarkup:
+        """Create keyboard with period buttons for a ticker"""
+        keyboard = []
+        
+        # Create two rows of buttons
+        row1 = []
+        row2 = []
+        
+        for i, (period, label) in enumerate(self.periods.items()):
+            if i < 3:
+                row1.append(InlineKeyboardButton(label, callback_data=f"analyze_{ticker}_{period}"))
+            else:
+                row2.append(InlineKeyboardButton(label, callback_data=f"analyze_{ticker}_{period}"))
+        
+        if row1:
+            keyboard.append(row1)
+        if row2:
+            keyboard.append(row2)
+        
+        return InlineKeyboardMarkup(keyboard)
+    
+    def _get_analysis_keyboard(self, ticker: str, period: str) -> InlineKeyboardMarkup:
+        """Create keyboard after analysis"""
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Change Period", callback_data=f"change_period_{ticker}"),
+                InlineKeyboardButton("📈 New Ticker", callback_data="new_ticker")
+            ],
+            [
+                InlineKeyboardButton("3 Months", callback_data=f"analyze_{ticker}_3m"),
+                InlineKeyboardButton("6 Months", callback_data=f"analyze_{ticker}_6m"),
+                InlineKeyboardButton("1 Year", callback_data=f"analyze_{ticker}_1y"),
+            ],
+            [
+                InlineKeyboardButton("2 Years", callback_data=f"analyze_{ticker}_2y"),
+                InlineKeyboardButton("5 Years", callback_data=f"analyze_{ticker}_5y"),
+            ]
+        ]
+        return InlineKeyboardMarkup(keyboard)
+    
     # Command Handlers
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
@@ -109,7 +159,7 @@ class UniversalTradingBot:
 • Indices (SPX, DJI, NASDAQ)
 
 📊 **Complete Technical Analysis:**
-• RSI, MACD, Moving Averages
+• RSI, MACD, Moving Averages (20 MA in green)
 • Volume and A/D Line
 • Divergence detection
 • Performance statistics
@@ -119,10 +169,12 @@ class UniversalTradingBot:
 /analyze TICKER PERIOD - Quick analysis
 /examples - Show ticker examples
 /help - Detailed help
+
+**Simply send a ticker symbol to start analysis!**
         """
         
         keyboard = [
-            [InlineKeyboardButton("📈 Analyze Now", callback_data="ask_ticker")],
+            [InlineKeyboardButton("📈 Start Analysis", callback_data="new_ticker")],
             [InlineKeyboardButton("🇺🇸 US Stocks", callback_data="examples_US Stocks")],
             [InlineKeyboardButton("❓ Help", callback_data="help")]
         ]
@@ -156,13 +208,29 @@ class UniversalTradingBot:
                 "• /analyze ENEL.MI 6m (Italian stock)\n"
                 "• /analyze BTC-USD 3m (Bitcoin)\n"
                 "• /analyze ^GSPC 2y (S&P 500)\n\n"
+                "Available periods: 3m, 6m, 1y, 2y, 5y\n\n"
                 "Use /examples for more tickers",
                 parse_mode=ParseMode.HTML
             )
             return
         
         ticker = context.args[0].upper()
-        period = context.args[1] if len(context.args) > 1 else '1y'
+        
+        # Check if period is provided
+        if len(context.args) > 1:
+            period = context.args[1].lower()
+            # Validate period
+            if period not in self.periods:
+                await update.message.reply_text(
+                    f"Invalid period: {period}\n\n"
+                    "Available periods: 3m, 6m, 1y, 2y, 5y\n\n"
+                    "Example: /analyze AAPL 1y",
+                    parse_mode=ParseMode.HTML
+                )
+                return
+        else:
+            # Default to 1 year
+            period = '1y'
         
         await self._perform_analysis(update, context, ticker, period)
     
@@ -177,7 +245,7 @@ class UniversalTradingBot:
         # Status message
         status = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🔄 Analyzing {ticker} ({period})...",
+            text=f"🔄 Analyzing {ticker} ({self.periods.get(period, period)})...",
             parse_mode=ParseMode.HTML
         )
         
@@ -197,9 +265,13 @@ class UniversalTradingBot:
                 error_msg += "• ENEL.MI, AIR.PA\n"
                 error_msg += "• SPY, BTC-USD\n"
                 
+                keyboard = [[InlineKeyboardButton("Try Again", callback_data="new_ticker")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=error_msg,
+                    reply_markup=reply_markup,
                     parse_mode=ParseMode.HTML
                 )
                 return
@@ -213,15 +285,8 @@ class UniversalTradingBot:
             except Exception as e:
                 logger.info(f"Chart generation skipped: {e}")
             
-            # Action buttons
-            keyboard = [
-                [
-                    InlineKeyboardButton("🔄 New Analysis", callback_data="ask_ticker"),
-                    InlineKeyboardButton(f"📈 {ticker}", callback_data=f"analyze_{ticker}_{period}")
-                ]
-            ]
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
+            # Create keyboard with period options
+            reply_markup = self._get_analysis_keyboard(ticker, period)
             
             # Send chart if available
             if chart_path:
@@ -293,9 +358,16 @@ class UniversalTradingBot:
             examples_text += f"**{category}:**\n"
             examples_text += f"• {', '.join(tickers[:5])}\n\n"
         
-        examples_text += "**Usage:**\n/analyze AAPL 1y\n/analyze ENEL.MI 6m\n/analyze BTC-USD 3m"
+        examples_text += "**Simply click a ticker below or type one:**"
         
-        keyboard = [[InlineKeyboardButton("📈 Analyze Now", callback_data="ask_ticker")]]
+        # Create keyboard with example tickers
+        keyboard = []
+        for category, tickers in self.example_tickers.items():
+            for ticker in tickers[:3]:  # Show first 3 from each category
+                keyboard.append([InlineKeyboardButton(ticker, callback_data=f"ticker_{ticker}")])
+        
+        keyboard.append([InlineKeyboardButton("📈 Enter Custom Ticker", callback_data="new_ticker")])
+        
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
@@ -319,8 +391,12 @@ class UniversalTradingBot:
 • Cryptocurrencies: BTC-USD, ETH-USD
 • Indices: ^GSPC (S&P 500), ^DJI (Dow Jones)
 
-**PERIODS (default: 1y):**
-3m, 6m, 1y, 2y, 3y, 5y
+**PERIOD OPTIONS:**
+• 3 Months (3m)
+• 6 Months (6m)
+• 1 Year (1y) - Default
+• 2 Years (2y)
+• 5 Years (5y)
 
 **INDICATORS INCLUDED:**
 • Price with 20, 50, 200 MAs (20 MA in green)
@@ -328,14 +404,22 @@ class UniversalTradingBot:
 • RSI (14)
 • MACD (12, 26, 9)
 
+**HOW TO USE:**
+1. Send a ticker symbol (AAPL, ENEL.MI, BTC-USD)
+2. Select analysis period
+3. View results and chart
+4. Use buttons to change period or analyze new ticker
+
 **EXAMPLES:**
 /analyze AAPL 1y
 /analyze ENEL.MI 6m
 /analyze BTC-USD 3m
 /analyze ^GSPC 2y
+
+**Or simply type: AAPL, TSLA, BTC-USD**
         """
         
-        keyboard = [[InlineKeyboardButton("📈 Start Analysis", callback_data="ask_ticker")]]
+        keyboard = [[InlineKeyboardButton("📈 Start Analysis", callback_data="new_ticker")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
@@ -351,7 +435,7 @@ class UniversalTradingBot:
         
         data = query.data
         
-        if data == "ask_ticker":
+        if data == "new_ticker":
             await query.edit_message_text(
                 "📊 Enter a ticker symbol:\n\n"
                 "Examples:\n"
@@ -359,25 +443,28 @@ class UniversalTradingBot:
                 "• ENEL.MI (Enel Italy)\n"
                 "• BTC-USD (Bitcoin)\n"
                 "• ^GSPC (S&P 500)\n\n"
-                "Or use: /analyze TICKER PERIOD",
+                "Or click examples below:",
                 parse_mode=ParseMode.HTML
             )
         
         elif data == "help":
             await self._handle_help(update, context)
         
-        elif data.startswith("examples_"):
-            category = data.replace("examples_", "")
-            if category in self.example_tickers:
-                tickers = self.example_tickers[category]
-                examples_text = f"📋 **{category} Examples:**\n\n"
-                for ticker in tickers[:8]:
-                    examples_text += f"• /analyze {ticker} 1y\n"
-                
-                await query.edit_message_text(
-                    examples_text,
-                    parse_mode=ParseMode.HTML
-                )
+        elif data.startswith("ticker_"):
+            ticker = data.replace("ticker_", "")
+            # Show period selection for this ticker
+            await query.edit_message_text(
+                f"📊 Select period for {ticker}:",
+                reply_markup=self._get_period_keyboard(ticker)
+            )
+        
+        elif data.startswith("change_period_"):
+            ticker = data.replace("change_period_", "")
+            # Show period selection for this ticker
+            await query.edit_message_text(
+                f"📊 Select period for {ticker}:",
+                reply_markup=self._get_period_keyboard(ticker)
+            )
         
         elif data.startswith("analyze_"):
             parts = data.split("_")
@@ -392,7 +479,11 @@ class UniversalTradingBot:
         
         # Simple ticker validation
         if len(text) > 1 and len(text) < 20:
-            await self._perform_analysis(update, context, text, '1y')
+            # Show period selection for this ticker
+            await update.message.reply_text(
+                f"📊 Select period for {text}:",
+                reply_markup=self._get_period_keyboard(text)
+            )
         else:
             await update.message.reply_text(
                 "Please enter a valid ticker symbol.\n\n"

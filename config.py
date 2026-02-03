@@ -3,12 +3,22 @@ Universal Trading Bot Configuration - Local Version
 """
 import os
 from typing import Dict
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class TradingConfig:
     """Universal configuration for all markets - Local version"""
     
     # Telegram Bot Token
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+    
+    # Check if token is set
+    if not TELEGRAM_TOKEN:
+        print("⚠️ WARNING: TELEGRAM_TOKEN not found in .env file")
+        print("The bot will not work without a valid Telegram token.")
+        print("Create a .env file with: TELEGRAM_TOKEN=your_token_here")
     
     # Yahoo Finance settings (relaxed for local)
     YAHOO_MAX_RETRIES = 2

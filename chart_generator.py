@@ -1,6 +1,7 @@
 """
 Chart Generator for Trading Analysis - Simplified Local Version
 Only includes Price, Volume+A/D, RSI, and MACD
+Fixed 200-day MA calculation
 """
 import matplotlib
 matplotlib.use('Agg')
@@ -56,6 +57,9 @@ class ChartGenerator:
             if len(display_data) > days_to_show:
                 display_data = display_data.tail(days_to_show)
             
+            # Calculate indicators on the sliced data to avoid flat lines
+            self._calculate_chart_indicators(display_data)
+            
             # Create figure with 4 subplots
             fig = plt.figure(figsize=(14, 12), 
                             facecolor=self.config.CHART_COLORS['background'],
@@ -84,13 +88,18 @@ class ChartGenerator:
             for period_ma, color, label in ma_configs:
                 col = f'SMA_{period_ma}'
                 if col in display_data.columns:
-                    valid_data = display_data[col].dropna()
-                    if len(valid_data) > 0:
-                        ax1.plot(valid_data.index, valid_data,
-                                color=color,
-                                linewidth=1.2,
-                                alpha=0.8,
-                                label=label)
+                    # Get valid data (not NaN)
+                    ma_data = display_data[col]
+                    valid_indices = ma_data.notna()
+                    if valid_indices.any():
+                        valid_data = ma_data[valid_indices]
+                        # Plot only where we have valid data
+                        if len(valid_data) > 1:  # Need at least 2 points to plot a line
+                            ax1.plot(valid_data.index, valid_data,
+                                    color=color,
+                                    linewidth=1.2,
+                                    alpha=0.8,
+                                    label=label)
             
             ax1.set_title(f'{ticker} - Technical Analysis ({period})', 
                          fontsize=14,
@@ -243,7 +252,47 @@ class ChartGenerator:
             
         except Exception as e:
             print(f"❌ Chart generation error: {e}")
+            import traceback
+            traceback.print_exc()
             raise
+    
+    def _calculate_chart_indicators(self, data: pd.DataFrame):
+        """Calculate indicators specifically for the chart display"""
+        try:
+            # Calculate moving averages on the displayed data
+            for period in [20, 50, 200]:
+                if len(data) >= period:
+                    # Calculate from the beginning of the sliced data
+                    data[f'SMA_{period}'] = data['Close'].rolling(window=period, min_periods=1).mean()
+                else:
+                    # If not enough data, use expanding mean
+                    data[f'SMA_{period}'] = data['Close'].expanding().mean()
+            
+            # Calculate RSI for chart
+            if len(data) >= 14:
+                delta = data['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
+                rs = gain / loss
+                data['RSI'] = 100 - (100 / (1 + rs))
+                data['RSI'] = data['RSI'].fillna(50)
+            
+            # Calculate MACD for chart
+            if len(data) >= 26:
+                exp1 = data['Close'].ewm(span=12, adjust=False).mean()
+                exp2 = data['Close'].ewm(span=26, adjust=False).mean()
+                data['MACD'] = exp1 - exp2
+                data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+                data['MACD_Hist'] = data['MACD'] - data['MACD_Signal']
+            
+            # Calculate A/D Line for chart
+            if 'Volume' in data.columns:
+                clv = ((data['Close'] - data['Low']) - (data['High'] - data['Close'])) / (data['High'] - data['Low'])
+                clv = clv.fillna(0)
+                data['AD_Line'] = (clv * data['Volume']).cumsum()
+                
+        except Exception as e:
+            print(f"Chart indicator calculation error: {e}")
     
     def _get_days_for_period(self, period: str, max_days: int) -> int:
         """Get appropriate number of days to show for each period"""
