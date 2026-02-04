@@ -1,7 +1,22 @@
 """
-Main entry point for the Universal Trading Bot (Local Version)
+Main entry point for the Enhanced Universal Trading Bot
 """
+import os
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Check if token is loaded
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+if not TELEGRAM_TOKEN:
+    print("❌ ERROR: TELEGRAM_TOKEN not found in .env file")
+    print("Please create a .env file with: TELEGRAM_TOKEN=your_token_here")
+    exit(1)
+
+print(f"✅ Telegram Token loaded: {TELEGRAM_TOKEN[:10]}...")
+
 from bot import UniversalTradingBot
 
 # Setup logging
@@ -14,7 +29,7 @@ logger = logging.getLogger(__name__)
 def main():
     """Main function to start the bot"""
     try:
-        logger.info("Starting Universal Trading Bot (Local Version)...")
+        logger.info("Starting Enhanced Universal Trading Bot...")
         
         bot = UniversalTradingBot()
         bot.run()
